@@ -60,9 +60,11 @@ jobs:
           NAME: ${{ steps.mod.outputs.name }}
           VERSION: ${{ steps.mod.outputs.version }}
         run: |
-          test -n "$FACTORIO_API_KEY" || { echo "::error::Secret FACTORIO_API_KEY is not set"; exit 1; }
+          # A pasted secret often ends with a newline, which breaks the HTTP header.
+          key=$(printf '%s' "$FACTORIO_API_KEY" | tr -d '[:space:]')
+          test -n "$key" || { echo "::error::Secret FACTORIO_API_KEY is not set"; exit 1; }
           init=$(curl -sS -X POST "https://mods.factorio.com/api/v2/mods/releases/init_upload" \
-                   -H "Authorization: Bearer $FACTORIO_API_KEY" -F "mod=$NAME")
+                   -H "Authorization: Bearer $key" -F "mod=$NAME")
           url=$(echo "$init" | jq -r '.upload_url // empty')
           test -n "$url" || { echo "::error::init_upload failed: $init"; exit 1; }
           result=$(curl -sS -X POST "$url" -F "file=@dist/${NAME}_${VERSION}.zip")
