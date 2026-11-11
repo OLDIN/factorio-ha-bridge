@@ -25,7 +25,7 @@ The game itself binds the port given to `--enable-lua-udp` (we use `34198`).
 
 | type | when | notes |
 |---|---|---|
-| `hello` | `on_init`, `on_configuration_changed`, every 3600 ticks | relay re-sends the last config when it sees one |
+| `hello` | `on_init`, `on_configuration_changed`, every 3600 ticks | relay re-sends the last config when it sees one (2a: not on `reason: "periodic"`) |
 | `heartbeat` | every 300 ticks, and right after a player leaves | `players_online` is always present, even with the `players` category off |
 | `snapshot` | every 3600 ticks while a category is enabled, and always once right after a config is accepted | replaces **all** categories (so it also clears categories just turned off) |
 | `update` | when a category's data changes | replaces only the categories it contains |
@@ -81,3 +81,70 @@ them, so a relay restart never blanks the last known values or the mod version.
 The relay keeps one persistent authenticated RCON connection: a live
 connection means the Factorio process is alive. Commands time out without
 dropping the connection, because a paused game may not answer them.
+
+## 2a additions (planets, research, evolution, defense)
+
+### Mod → relay
+
+```json
+{"v":1,"type":"hello","tick":1,"mod_version":"0.2.0","reason":"init"}
+{"v":1,"type":"snapshot","tick":9,"part":1,"parts":2,"data":{"planets":{...},"research":{...}}}
+```
+
+- `hello.reason`: `init` | `configuration_changed` | `periodic`. The relay re-sends the
+  config on a `hello` only when `reason != "periodic"`; a hello without `reason` (old mod)
+  is treated as before and re-sends it.
+- `part` / `parts`: a snapshot is split **by category** (a category is never cut in half).
+  The relay applies the snapshot once all parts with the same `tick` have arrived; an
+  incomplete set is dropped as soon as a part with a newer `tick` arrives. A snapshot
+  without `part`/`parts` is complete as is.
+- After a config the mod sends a full snapshot only if the config changed or this is the
+  first config since the game was loaded.
+
+### Categories (`data.<category>`)
+
+```json
+"planets":  {"bodies":[{"name":"nauvis","kind":"planet","x":0.0,"y":-15.0,"distance":15,"orientation":0.275,
+                        "magnitude":1.0,"parent":null,"state":"built","unlocked_by":null}]}
+"research": {"current":{"name":"planet-discovery-maraxsis","level":1,"progress":0.62,"unlocks":["maraxsis"]},
+             "queue":["up to 5 names"]}
+"evolution":{"by_planet":{"nauvis":0.92,"gleba":0.61}}
+"defense":  {"by_planet":{"nauvis":{"turrets":{"total":120,"no_ammo":6,"no_power":0,"no_ammo_at":[[10,-4]]},
+                                    "walls_damaged":{"count":12,"at":[[-412,1180]]},
+                                    "attack":{"since_tick":100,"position":[-412,1180],"gps":"[gps=-412,1180,nauvis]",
+                                              "losses":{"gun-turret":4,"stone-wall":12}}}}}
+"players":  {"online":["alice","guest"],"afk_minutes":{"guest":4}}
+```
+
+- `state`: `locked` | `unlocked` | `built`. `parent`: the name of the body whose position
+  equals this body's `origin` (tolerance `0.01`), otherwise `null`. Bodies with
+  `hidden = true` are not sent.
+- `attack` is absent when there is no attack. Position lists (`no_ammo_at`, `at`) hold at
+  most 5 entries.
+- Empty Lua tables arrive as `[]`: the relay turns an empty top-level category `[]` into
+  `{}`; deeper levels are the consumer's job.
+
+### New events
+
+| event | data |
+|---|---|
+| `attack_started` | `planet`, `surface`, `position` `[x,y]`, `gps` |
+| `attack_ended` | same, plus `duration_s`, `losses` `{name: count}` |
+| `turrets_no_ammo` | `planet`, `count` |
+| `turrets_ok` | `planet` |
+| `research_finished` | `name`, `level` |
+| `player_died` | `player`, `planet` (or `null`), `surface`, `cause` (or `null`) |
+
+### Relay → MQTT
+
+| topic | retained | payload |
+|---|---|---|
+| `factorio/<id>/data/<category>` | yes | `{"v":1,"tick":123,"data":{...}}`; an empty payload means the category was switched off |
+
+- Published only when the category's content changes (a category removed by a full
+  snapshot gets the empty retained payload). The category name must match `^[a-z_]+$`,
+  otherwise the relay logs a warning and skips it.
+- `state.data` keeps **only** `players`, so integrations written for 0.1.x keep working;
+  all other categories live in `data/*` only.
+- On startup the relay also reads its own retained `data/*` topics; fresh game data wins
+  over the retained copy, and only categories not yet known are filled from it.

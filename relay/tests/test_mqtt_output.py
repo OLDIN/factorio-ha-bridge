@@ -210,3 +210,53 @@ async def test_seed_delivered_on_first_connect(broker_port):
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_data_topic_retained_and_cleared(broker_port):
+    await _wait_broker(broker_port)
+    sid = uuid.uuid4().hex[:6]
+    out = MqttOutput(_settings(broker_port, sid))
+    task = await _started(out, _noop)
+    payload = {"v": 1, "tick": 5, "data": {"queue": ["a"]}}
+    try:
+        await out.publish_data("research", payload)
+        async with aiomqtt.Client("127.0.0.1", broker_port) as client:
+            await client.subscribe(f"factorio/{sid}/data/research")
+            msg = await asyncio.wait_for(anext(aiter(client.messages)), 5)
+            assert msg.retain and json.loads(msg.payload) == payload
+        await out.publish_data("research", None)
+        async with aiomqtt.Client("127.0.0.1", broker_port) as client:
+            await client.subscribe(f"factorio/{sid}/data/research")
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(anext(aiter(client.messages)), 1)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_seed_reads_data_topics(broker_port):
+    await _wait_broker(broker_port)
+    sid = uuid.uuid4().hex[:6]
+    first = MqttOutput(_settings(broker_port, sid))
+    task = await _started(first, _noop)
+    await first.publish_data("research", {"v": 1, "tick": 5, "data": {"queue": ["a"]}})
+    await first.publish_data("planets", {"v": 1, "tick": 5, "data": {"bodies": []}})
+    await first.publish_data("gone", {"v": 1, "tick": 5, "data": {"x": 1}})
+    await first.publish_data("gone", None)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    seeds: list = []
+    connected = asyncio.Event()
+
+    async def on_connected():
+        connected.set()
+
+    second = MqttOutput(_settings(broker_port, sid))
+    task = asyncio.create_task(second.start(_noop, on_connected, seeds.append))
+    try:
+        await asyncio.wait_for(connected.wait(), 5)
+        assert seeds == [{"data": {"research": {"queue": ["a"]}, "planets": {"bodies": []}}}]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

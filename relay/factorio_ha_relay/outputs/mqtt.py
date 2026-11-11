@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 from typing import Any
 
 import aiomqtt
@@ -15,6 +16,9 @@ from .base import ConfigCallback, ConnectedCallback, SeedCallback
 
 _LOGGER = logging.getLogger(__name__)
 TOPIC_PREFIX = "factorio"
+CATEGORY_RE = re.compile(r"^[a-z_]+$")
+# once state and hello are in, only data/* retained messages can still follow, right behind them
+SEED_IDLE = 0.5
 
 
 def _compact(obj: Any) -> str:
@@ -33,6 +37,7 @@ class MqttOutput:
         self.topic_state = f"{base}/state"
         self.topic_event = f"{base}/event"
         self.topic_config = f"{base}/config"
+        self.topic_data_prefix = f"{base}/data/"
 
     def _new_client(self, suffix: str, **kwargs: Any) -> aiomqtt.Client:
         s = self._settings
@@ -91,31 +96,39 @@ class MqttOutput:
             return None
         return config if isinstance(config, dict) else None
 
-    async def _receive_retained(self, client: aiomqtt.Client, timeout: float = 2.0) -> dict[str, dict[str, Any]]:
-        """Read our own retained state and hello once (the broker sends them right after subscribing)."""
+    async def _receive_retained(self, client: aiomqtt.Client, timeout: float = 2.0) -> dict[str, Any]:
+        """Read our own retained state, hello and data/* once (the broker sends them right after subscribing)."""
         topics = {self.topic_state: "state", self.topic_hello: "hello"}
-        for topic in topics:
+        data_filter = f"{self.topic_data_prefix}+"
+        for topic in (*topics, data_filter):
             await client.subscribe(topic, qos=1)
-        found: dict[str, dict[str, Any]] = {}
+        found: dict[str, Any] = {}
+        categories: dict[str, dict[str, Any]] = {}
         try:
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout(timeout) as deadline:
                 async for message in client.messages:
-                    kind = topics.get(str(message.topic))
-                    if kind is None:
-                        continue
+                    topic = str(message.topic)
                     try:
                         payload = json.loads(message.payload) if message.payload else None
                     except ValueError:
                         payload = None
-                    if isinstance(payload, dict):
-                        found[kind] = payload
+                    if topic in topics:
+                        if isinstance(payload, dict):
+                            found[topics[topic]] = payload
+                    elif topic.startswith(self.topic_data_prefix):
+                        category = topic[len(self.topic_data_prefix):]
+                        content = payload.get("data") if isinstance(payload, dict) else None
+                        if CATEGORY_RE.match(category) and isinstance(content, dict):
+                            categories[category] = content
                     if len(found) == len(topics):
-                        break
+                        deadline.reschedule(asyncio.get_running_loop().time() + SEED_IDLE)
         except TimeoutError:
             pass
         finally:
-            for topic in topics:
+            for topic in (*topics, data_filter):
                 await client.unsubscribe(topic)
+        if categories:
+            found["data"] = categories
         return found
 
     async def _publish(self, topic: str, payload: str, retain: bool) -> None:
@@ -135,6 +148,12 @@ class MqttOutput:
 
     async def publish_event(self, event: dict[str, Any]) -> None:
         await self._publish(self.topic_event, _compact(event), retain=False)
+
+    async def publish_data(self, category: str, payload: dict[str, Any] | None) -> None:
+        # an empty retained payload deletes the retained message: the category is switched off
+        await self._publish(
+            f"{self.topic_data_prefix}{category}", "" if payload is None else _compact(payload), retain=True
+        )
 
     async def stop(self) -> None:
         await self._publish(self.topic_availability, "offline", retain=True)

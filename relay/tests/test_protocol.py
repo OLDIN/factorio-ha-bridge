@@ -41,3 +41,8 @@ def test_empty_players_online_object_becomes_list():
 def test_rejects_garbage(raw):
     with pytest.raises(ProtocolError):
         parse_mod_message(raw)
+
+
+def test_top_level_empty_category_list_becomes_dict():
+    m = parse_mod_message(b'{"v":1,"type":"snapshot","tick":1,"data":{"defense":[]}}')
+    assert m.body["data"] == {"defense": {}}

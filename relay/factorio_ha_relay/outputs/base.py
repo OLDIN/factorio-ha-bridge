@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 ConfigCallback = Callable[[dict[str, Any] | None], Awaitable[None]]
 ConnectedCallback = Callable[[], Awaitable[None]]
-# {"state": {...}, "hello": {...}} — whatever this relay had retained before it restarted
+# {"state": {...}, "hello": {...}, "data": {category: {...}}} — whatever this relay had retained before it restarted
 SeedCallback = Callable[[dict[str, dict[str, Any]]], None]
 
 
@@ -17,7 +17,7 @@ class Output(Protocol):
     ) -> None:
         """Run forever: connect, call on_connected on every (re)connect, deliver configs.
 
-        On the first successful connection, hand the state and hello this relay published
+        On the first successful connection, hand the state, hello and data categories this relay published
         before it restarted (if any) to on_seed, before on_connected.
         """
 
@@ -26,5 +26,8 @@ class Output(Protocol):
     async def publish_state(self, state: dict[str, Any]) -> None: ...
 
     async def publish_event(self, event: dict[str, Any]) -> None: ...
+
+    async def publish_data(self, category: str, payload: dict[str, Any] | None) -> None:
+        """Publish one data category (retained); ``None`` removes it."""
 
     async def stop(self) -> None: ...

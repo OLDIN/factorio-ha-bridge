@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from . import __version__
+from .assembler import SnapshotAssembler
 from .config import Settings
 from .game_state import compute_game_state
 from .outputs.base import Output
@@ -20,6 +22,7 @@ from .state import StateStore
 
 _LOGGER = logging.getLogger(__name__)
 CONFIG_COMMAND = "/factorio-ha-config"
+CATEGORY_RE = re.compile(r"^[a-z_]+$")
 EMPTY_CONFIG: dict[str, Any] = {"v": PROTOCOL_VERSION, "categories": {}}
 
 
@@ -52,6 +55,7 @@ class Relay:
         self._monotonic = monotonic
         self._utcnow = utcnow
         self._store = StateStore()
+        self._assembler = SnapshotAssembler()
         self._last_heartbeat: float | None = None
         self._config: dict[str, Any] | None = None
         self._game_state: tuple[str, str | None] | None = None
@@ -84,13 +88,20 @@ class Relay:
                  "time": self._utcnow(), "data": data if isinstance(data, dict) else {}}
             )
             return
+        assembled = self._assembler.add(msg)
+        if assembled is None:
+            return
+        msg = assembled
         self._store.apply(msg)
         if msg.type == "heartbeat":
             self._last_heartbeat = self._monotonic()
         if msg.type == "hello":
             _LOGGER.info("Mod says hello (version %s)", self._store.mod_version)
             await self._output.publish_hello(self._hello())
-            await self._send_config()
+            # a periodic hello is only a liveness ping; old mods send no reason and get the old behaviour
+            if msg.body.get("reason") != "periodic":
+                await self._send_config()
+        await self._publish_changes()
         await self.evaluate()
 
     async def on_config(self, config: dict[str, Any] | None) -> None:
@@ -104,6 +115,9 @@ class Relay:
     async def on_output_connected(self) -> None:
         await self._output.publish_hello(self._hello())
         await self._publish_state(force=True)
+        self._store.take_changes()
+        for category, value in self._store.categories.items():
+            await self._publish_category(category, value)
 
     def seed(self, state: dict[str, Any]) -> None:
         """Continue from the state published before a relay restart.
@@ -118,8 +132,8 @@ class Relay:
         if self._store.tick is None and isinstance(tick, int) and not isinstance(tick, bool):
             self._store.tick = tick
         data = state.get("data")
-        if not self._store.data and isinstance(data, dict):
-            self._store.data = dict(data)
+        if isinstance(data, dict) and isinstance(data.get("players"), dict):
+            self._store.seed_categories({"players": data["players"]})
         game_state, since = state.get("game_state"), state.get("game_state_since")
         if self._game_state is None and isinstance(game_state, str) and isinstance(since, str):
             self._game_state = (game_state, state.get("game_state_reason"))
@@ -130,6 +144,10 @@ class Relay:
         version = hello.get("mod_version")
         if self._store.mod_version is None and isinstance(version, str):
             self._store.mod_version = version
+
+    def seed_data(self, data: dict[str, dict[str, Any]]) -> None:
+        """Restore categories from the retained data/* topics; only categories still unknown are filled."""
+        self._store.seed_categories({k: v for k, v in data.items() if isinstance(v, dict)})
 
     # --- periodic -----------------------------------------------------------
 
@@ -159,6 +177,17 @@ class Relay:
     def _hello(self) -> dict[str, Any]:
         return {"v": PROTOCOL_VERSION, "server_id": self._settings.server_id,
                 "relay_version": __version__, "mod_version": self._store.mod_version}
+
+    async def _publish_changes(self) -> None:
+        for category, value in self._store.take_changes().items():
+            await self._publish_category(category, value)
+
+    async def _publish_category(self, category: str, value: dict[str, Any] | None) -> None:
+        if not CATEGORY_RE.match(category):
+            _LOGGER.warning("Skipped category with a bad name: %r", category)
+            return
+        payload = None if value is None else {"v": PROTOCOL_VERSION, "tick": self._store.tick, "data": value}
+        await self._output.publish_data(category, payload)
 
     async def _publish_state(self, force: bool = False) -> None:
         if self._game_state is None:
