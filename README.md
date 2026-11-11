@@ -25,6 +25,12 @@ Status: proof of concept. Protocol: [docs/protocol.md](docs/protocol.md).
 3. `cp deploy/.env.example deploy/.env` and fill in MQTT settings.
 4. `FACTORIO_DATA_DIR=<your factorio data dir> docker compose -f <factorio compose> -f deploy/docker-compose.relay.yml up -d --build`
 
+## Roadmap
+
+What is done and what is planned (sensors, events, attacks, production lines,
+space platforms…) is tracked in one place:
+[ha-factorio → Roadmap](https://github.com/OLDIN/ha-factorio#roadmap).
+
 ## Development
 
 ```bash
