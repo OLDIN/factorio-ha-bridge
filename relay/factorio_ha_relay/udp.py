@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import logging
 from collections.abc import Callable
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class _Protocol(asyncio.DatagramProtocol):
@@ -11,6 +15,14 @@ class _Protocol(asyncio.DatagramProtocol):
         self._on_datagram = on_datagram
 
     def datagram_received(self, data: bytes, addr: tuple) -> None:
+        # The mod can only send to localhost; anything else is not ours.
+        try:
+            loopback = ipaddress.ip_address(addr[0]).is_loopback
+        except ValueError:
+            loopback = False
+        if not loopback:
+            _LOGGER.warning("Dropped datagram from non-loopback source %s", addr[0])
+            return
         self._on_datagram(data)
 
 

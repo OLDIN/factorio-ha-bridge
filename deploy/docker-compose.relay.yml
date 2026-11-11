@@ -1,0 +1,18 @@
+# Add to the Factorio compose project:
+#   docker compose -f <factorio compose> -f /opt/factorio-ha/deploy/docker-compose.relay.yml up -d --build
+# The Factorio service itself also needs: network_mode: host, command: ["--enable-lua-udp=34198"]
+services:
+  factorio-ha-relay:
+    build: ../relay
+    container_name: factorio-ha-relay
+    network_mode: host
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      FHA_RCON_PASSWORD_FILE: /run/rconpw
+    volumes:
+      - /opt/factorio/config/rconpw:/run/rconpw:ro
+    # Must be able to read rconpw: use the owner of /opt/factorio/config/rconpw
+    # (stat -c %u:%g /opt/factorio/config/rconpw); factoriotools defaults to 845.
+    user: "845:845"
+    mem_limit: 96m
