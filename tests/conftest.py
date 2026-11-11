@@ -3,9 +3,26 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Any
 
+import pytest
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
 from custom_components.factorio.providers.base import Provider, ProviderMessage
+
+
+@pytest.fixture
+async def mqtt_mock(hass, mqtt_mock):
+    """The plugin's mqtt_mock, plus unloading MQTT at teardown so its timers stop."""
+    yield mqtt_mock
+    for domain in ("factorio", "mqtt"):  # our entry unsubscribes from MQTT first
+        for entry in hass.config_entries.async_entries(domain):
+            await hass.config_entries.async_unload(entry.entry_id)
+    # Let MQTT's debounced (un)subscribe cooldown timers fire.
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await hass.async_block_till_done()
 
 
 class FakeProvider(Provider):

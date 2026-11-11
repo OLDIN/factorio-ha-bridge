@@ -1,0 +1,104 @@
+{
+  "config": {
+    "flow_title": "{server_id}",
+    "step": {
+      "user": {
+        "title": "Connect a Factorio server",
+        "description": "The factorio-ha relay must be running next to the server.",
+        "data": {
+          "provider": "Connection",
+          "server_id": "Server ID"
+        },
+        "data_description": {
+          "server_id": "The FHA_SERVER_ID configured on the relay, e.g. main."
+        }
+      },
+      "confirm": {
+        "title": "Factorio server found",
+        "description": "Set up the Factorio server {server_id}?"
+      },
+      "categories": {
+        "title": "What to collect",
+        "description": "The game collects and sends only what is enabled here.",
+        "data": {
+          "players": "Players online"
+        }
+      }
+    },
+    "error": {
+      "invalid_server_id": "Use lowercase letters, digits, - or _ (the same value as FHA_SERVER_ID on the relay)."
+    },
+    "abort": {
+      "already_configured": "This Factorio server is already configured.",
+      "invalid_discovery_info": "The discovered relay message is not valid."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "What to collect",
+        "description": "The game collects and sends only what is enabled here.",
+        "data": {
+          "players": "Players online"
+        }
+      }
+    }
+  },
+  "selector": {
+    "provider": {
+      "options": {
+        "mqtt": "MQTT (Mosquitto)"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connection": {
+        "name": "Connection"
+      },
+      "game_running": {
+        "name": "Game running"
+      }
+    },
+    "sensor": {
+      "game_state": {
+        "name": "Game state",
+        "state": {
+          "running": "Running",
+          "paused": "Paused",
+          "stopped": "Stopped",
+          "no_connection": "No connection"
+        },
+        "state_attributes": {
+          "reason": {
+            "name": "Reason"
+          },
+          "since": {
+            "name": "Since"
+          }
+        }
+      },
+      "players_online": {
+        "name": "Players online",
+        "state_attributes": {
+          "players": {
+            "name": "Players"
+          }
+        }
+      }
+    },
+    "event": {
+      "game_events": {
+        "name": "Game events",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "player_joined": "Player joined",
+              "player_left": "Player left"
+            }
+          }
+        }
+      }
+    }
+  }
+}

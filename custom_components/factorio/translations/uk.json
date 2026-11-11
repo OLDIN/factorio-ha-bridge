@@ -1,0 +1,104 @@
+{
+  "config": {
+    "flow_title": "{server_id}",
+    "step": {
+      "user": {
+        "title": "Підключити сервер Factorio",
+        "description": "Поруч із сервером має працювати relay factorio-ha.",
+        "data": {
+          "provider": "Підключення",
+          "server_id": "Ідентифікатор сервера"
+        },
+        "data_description": {
+          "server_id": "Значення FHA_SERVER_ID з налаштувань relay, наприклад main."
+        }
+      },
+      "confirm": {
+        "title": "Знайдено сервер Factorio",
+        "description": "Налаштувати сервер Factorio {server_id}?"
+      },
+      "categories": {
+        "title": "Що збирати",
+        "description": "Гра збирає й надсилає лише те, що тут увімкнено.",
+        "data": {
+          "players": "Гравці онлайн"
+        }
+      }
+    },
+    "error": {
+      "invalid_server_id": "Лише малі латинські літери, цифри, - або _ (те саме значення, що FHA_SERVER_ID у relay)."
+    },
+    "abort": {
+      "already_configured": "Цей сервер Factorio уже налаштовано.",
+      "invalid_discovery_info": "Повідомлення від relay некоректне."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Що збирати",
+        "description": "Гра збирає й надсилає лише те, що тут увімкнено.",
+        "data": {
+          "players": "Гравці онлайн"
+        }
+      }
+    }
+  },
+  "selector": {
+    "provider": {
+      "options": {
+        "mqtt": "MQTT (Mosquitto)"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connection": {
+        "name": "Зв'язок"
+      },
+      "game_running": {
+        "name": "Гра йде"
+      }
+    },
+    "sensor": {
+      "game_state": {
+        "name": "Стан гри",
+        "state": {
+          "running": "Іде",
+          "paused": "Пауза",
+          "stopped": "Зупинено",
+          "no_connection": "Немає зв'язку"
+        },
+        "state_attributes": {
+          "reason": {
+            "name": "Причина"
+          },
+          "since": {
+            "name": "З"
+          }
+        }
+      },
+      "players_online": {
+        "name": "Гравців онлайн",
+        "state_attributes": {
+          "players": {
+            "name": "Гравці"
+          }
+        }
+      }
+    },
+    "event": {
+      "game_events": {
+        "name": "Події гри",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "player_joined": "Гравець зайшов",
+              "player_left": "Гравець вийшов"
+            }
+          }
+        }
+      }
+    }
+  }
+}
