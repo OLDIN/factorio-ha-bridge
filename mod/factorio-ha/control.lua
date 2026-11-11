@@ -7,10 +7,11 @@ local config = require("scripts.config")
 local planets = require("scripts.planets")
 local research = require("scripts.research")
 local evolution = require("scripts.evolution")
+local defense = require("scripts.defense")
 
 local HEARTBEAT_TICKS = 300 -- 5 s
 local SNAPSHOT_TICKS = 3600 -- 60 s
-local CHECK_TICKS = 600 -- 10 s: research progress and evolution
+local CHECK_TICKS = 600 -- 10 s: research progress, evolution, damaged walls
 
 -- Session-local: only decides whether the server sends a snapshot (server-only UDP), no desync.
 local config_seen_this_session = false
@@ -32,6 +33,7 @@ local function collect()
   if config.enabled("planets") then data.planets = planets.collect() end
   if config.enabled("research") then data.research = research.snapshot() end
   if config.enabled("evolution") then data.evolution = evolution.snapshot() end
+  if config.enabled("defense") then data.defense = defense.snapshot() end
   return data
 end
 
@@ -70,7 +72,12 @@ script.on_nth_tick(HEARTBEAT_TICKS, send_heartbeat)
 script.on_nth_tick(CHECK_TICKS, function()
   research.refresh(false)
   evolution.refresh()
+  defense.check_walls()
+  defense.refresh()
 end)
+
+-- Turret scanner: one portion per step (a lap takes CHECK_TICKS).
+script.on_nth_tick(defense.SCAN_TICKS, defense.scan_step)
 
 script.on_nth_tick(SNAPSHOT_TICKS, function()
   send_hello("periodic")
@@ -84,6 +91,17 @@ end)
 
 script.on_event(defines.events.on_surface_created, planets.refresh)
 script.on_event(defines.events.on_surface_deleted, planets.refresh)
+
+local turret_filters = {}
+for _, t in ipairs(defense.TURRET_TYPES) do
+  turret_filters[#turret_filters + 1] = { filter = "type", type = t }
+end
+script.on_event(defines.events.on_built_entity, defense.on_built, turret_filters)
+script.on_event(defines.events.on_robot_built_entity, defense.on_built, turret_filters)
+script.on_event(defines.events.script_raised_built, defense.on_built, turret_filters)
+script.on_event(defines.events.on_object_destroyed, defense.on_object_destroyed)
+script.on_event(defines.events.on_entity_damaged, defense.on_entity_damaged,
+  { { filter = "type", type = "wall" }, { filter = "type", type = "gate" } })
 
 script.on_event(defines.events.on_player_joined_game, function(e)
   player_event("player_joined", e.player_index)
