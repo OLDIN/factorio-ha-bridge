@@ -10,7 +10,7 @@
           "server_id": "Ідентифікатор сервера"
         },
         "data_description": {
-          "server_id": "Значення FHA_SERVER_ID з налаштувань relay, наприклад main."
+          "server_id": "Значення FHA_SERVER_ID з налаштувань relay, наприклад main або home."
         }
       },
       "confirm": {

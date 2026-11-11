@@ -27,7 +27,7 @@ The game itself binds the port given to `--enable-lua-udp` (we use `34198`).
 |---|---|---|
 | `hello` | `on_init`, `on_configuration_changed`, every 3600 ticks | relay re-sends the last config when it sees one |
 | `heartbeat` | every 300 ticks, and right after a player leaves | `players_online` is always present, even with the `players` category off |
-| `snapshot` | every 3600 ticks and right after a config is accepted, only if a category is enabled | replaces **all** categories |
+| `snapshot` | every 3600 ticks while a category is enabled, and always once right after a config is accepted | replaces **all** categories (so it also clears categories just turned off) |
 | `update` | when a category's data changes | replaces only the categories it contains |
 | `event` | one-shot facts (`player_joined`, `player_left`) | only for enabled categories |
 

@@ -10,7 +10,7 @@
           "server_id": "Server ID"
         },
         "data_description": {
-          "server_id": "The FHA_SERVER_ID configured on the relay, e.g. main."
+          "server_id": "The FHA_SERVER_ID configured on the relay, e.g. main or home."
         }
       },
       "confirm": {
