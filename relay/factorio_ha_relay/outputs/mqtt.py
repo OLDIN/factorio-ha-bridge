@@ -19,6 +19,7 @@ TOPIC_PREFIX = "factorio"
 CATEGORY_RE = re.compile(r"^[a-z_]+$")
 # once state and hello are in, only data/* retained messages can still follow, right behind them
 SEED_IDLE = 0.5
+MAX_SEED_CATEGORIES = 64
 
 
 def _compact(obj: Any) -> str:
@@ -104,9 +105,14 @@ class MqttOutput:
             await client.subscribe(topic, qos=1)
         found: dict[str, Any] = {}
         categories: dict[str, dict[str, Any]] = {}
+        cap_warned = False
+        loop = asyncio.get_running_loop()
+        absolute_end = loop.time() + timeout  # the whole read never takes longer than this
         try:
             async with asyncio.timeout(timeout) as deadline:
                 async for message in client.messages:
+                    if not message.retain:
+                        continue  # live traffic is not the state we are restoring
                     topic = str(message.topic)
                     try:
                         payload = json.loads(message.payload) if message.payload else None
@@ -119,9 +125,14 @@ class MqttOutput:
                         category = topic[len(self.topic_data_prefix):]
                         content = payload.get("data") if isinstance(payload, dict) else None
                         if CATEGORY_RE.match(category) and isinstance(content, dict):
-                            categories[category] = content
+                            if category in categories or len(categories) < MAX_SEED_CATEGORIES:
+                                categories[category] = content
+                            elif not cap_warned:
+                                cap_warned = True
+                                _LOGGER.warning("Seed: more than %s data categories, ignoring the rest",
+                                                MAX_SEED_CATEGORIES)
                     if len(found) == len(topics):
-                        deadline.reschedule(asyncio.get_running_loop().time() + SEED_IDLE)
+                        deadline.reschedule(min(loop.time() + SEED_IDLE, absolute_end))
         except TimeoutError:
             pass
         finally:
