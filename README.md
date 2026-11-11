@@ -44,13 +44,21 @@ container is left alone). A newer mod is installed with `factorio-add-mods.sh`, 
 restarts the game. Paths and mod portal credentials can go in
 `/root/.factorio-ha-update.env` (see the top of the script).
 
-## Releasing the mod
+## Releasing
 
-Bump `version` in `mod/factorio-ha/info.json`, add a `Version: X.Y.Z` entry to
-`mod/factorio-ha/changelog.txt` and merge to `main`. The `Publish mod` workflow
-uploads it to the mod portal (skipped if that version is already there) and tags
-`mod-vX.Y.Z`. It needs the repository secret `FACTORIO_API_KEY`
-(factorio.com → profile → API keys, usage "ModPortal: Upload Mods").
+```bash
+python3 scripts/bump_version.py patch --pr   # or minor / major
+```
+
+Bumps one version everywhere (mod `info.json`, relay `pyproject.toml` and
+`__init__.py`), adds a `changelog.txt` entry for the mod, writes
+`RELEASE_NOTES_X.Y.Z.md` from the commits since the last `v*` tag and opens a PR.
+After the merge:
+
+- `Release` tags `vX.Y.Z` and publishes the GitHub Release;
+- `Publish mod` uploads the mod to the Factorio mod portal (skipped if that version is
+  already there). It needs the repository secret `FACTORIO_API_KEY`
+  (factorio.com → profile → API keys, usage "ModPortal: Upload Mods").
 
 ## Development
 
