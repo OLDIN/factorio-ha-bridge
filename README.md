@@ -31,6 +31,19 @@ What is done and what is planned (sensors, events, attacks, production lines,
 space platforms…) is tracked in one place:
 [ha-factorio → Roadmap](https://github.com/OLDIN/ha-factorio#roadmap).
 
+## Updating on the server
+
+```bash
+/opt/factorio-ha-bridge/deploy/update.sh          # relay + mod (asks before restarting the game)
+/opt/factorio-ha-bridge/deploy/update.sh relay    # only the relay; the game keeps running
+/opt/factorio-ha-bridge/deploy/update.sh mod      # only the mod, if the mod portal has a newer version
+```
+
+The relay is rebuilt from `git pull` (unchanged code reuses the Docker cache, so the
+container is left alone). A newer mod is installed with `factorio-add-mods.sh`, which
+restarts the game. Paths and mod portal credentials can go in
+`/root/.factorio-ha-update.env` (see the top of the script).
+
 ## Releasing the mod
 
 Bump `version` in `mod/factorio-ha/info.json`, add a `Version: X.Y.Z` entry to
