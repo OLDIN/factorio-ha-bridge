@@ -1,0 +1,5 @@
+# Tests for the Home Assistant integration (python 3.14, .venv-ha).
+# pytest-homeassistant-custom-component pins homeassistant: 0.13.375 -> HA 2026.10.4
+# (newest available on 2026-11-11; production HA is 2026.11.0).
+pytest-homeassistant-custom-component==0.13.375
+ruff>=0.14
