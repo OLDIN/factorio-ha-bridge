@@ -1,0 +1,76 @@
+name: Publish mod
+
+# A push to main that changes the mod publishes it to the Factorio mod portal
+# if its info.json version is not there yet. Needs the repository secret
+# FACTORIO_API_KEY (factorio.com → profile → API keys, usage "ModPortal: Upload Mods").
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mod/factorio-ha/**"
+      - ".github/workflows/publish-mod.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write # push the mod-vX.Y.Z tag
+
+concurrency:
+  group: publish-mod
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read mod name and version
+        id: mod
+        run: |
+          echo "name=$(jq -r .name mod/factorio-ha/info.json)" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r .version mod/factorio-ha/info.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Already on the mod portal?
+        id: portal
+        env:
+          NAME: ${{ steps.mod.outputs.name }}
+          VERSION: ${{ steps.mod.outputs.version }}
+        run: |
+          if curl -fsS "https://mods.factorio.com/api/mods/$NAME" \
+               | jq -e --arg v "$VERSION" '.releases[] | select(.version == $v)' > /dev/null; then
+            echo "Version $VERSION is already published, nothing to do."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Changelog has this version
+        if: steps.portal.outputs.published == 'false'
+        run: |
+          grep -qx "Version: ${{ steps.mod.outputs.version }}" mod/factorio-ha/changelog.txt
+
+      - name: Build zip
+        if: steps.portal.outputs.published == 'false'
+        run: scripts/package-mod.sh
+
+      - name: Upload to the mod portal
+        if: steps.portal.outputs.published == 'false'
+        env:
+          FACTORIO_API_KEY: ${{ secrets.FACTORIO_API_KEY }}
+          NAME: ${{ steps.mod.outputs.name }}
+          VERSION: ${{ steps.mod.outputs.version }}
+        run: |
+          test -n "$FACTORIO_API_KEY" || { echo "::error::Secret FACTORIO_API_KEY is not set"; exit 1; }
+          init=$(curl -sS -X POST "https://mods.factorio.com/api/v2/mods/releases/init_upload" \
+                   -H "Authorization: Bearer $FACTORIO_API_KEY" --data-urlencode "mod=$NAME")
+          url=$(echo "$init" | jq -r '.upload_url // empty')
+          test -n "$url" || { echo "::error::init_upload failed: $init"; exit 1; }
+          result=$(curl -sS -X POST "$url" -F "file=@dist/${NAME}_${VERSION}.zip")
+          echo "$result" | jq -e '.success == true' > /dev/null || { echo "::error::upload failed: $result"; exit 1; }
+          echo "Published $NAME $VERSION"
+
+      - name: Tag the release
+        if: steps.portal.outputs.published == 'false'
+        run: |
+          git tag "mod-v${{ steps.mod.outputs.version }}"
+          git push origin "mod-v${{ steps.mod.outputs.version }}"

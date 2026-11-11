@@ -31,6 +31,14 @@ What is done and what is planned (sensors, events, attacks, production lines,
 space platforms…) is tracked in one place:
 [ha-factorio → Roadmap](https://github.com/OLDIN/ha-factorio#roadmap).
 
+## Releasing the mod
+
+Bump `version` in `mod/factorio-ha/info.json`, add a `Version: X.Y.Z` entry to
+`mod/factorio-ha/changelog.txt` and merge to `main`. The `Publish mod` workflow
+uploads it to the mod portal (skipped if that version is already there) and tags
+`mod-vX.Y.Z`. It needs the repository secret `FACTORIO_API_KEY`
+(factorio.com → profile → API keys, usage "ModPortal: Upload Mods").
+
 ## Development
 
 ```bash
