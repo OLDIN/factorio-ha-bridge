@@ -125,6 +125,12 @@ class Relay:
             self._game_state = (game_state, state.get("game_state_reason"))
             self._since = since
 
+    def seed_hello(self, hello: dict[str, Any]) -> None:
+        """Remember the mod version from the hello published before a relay restart."""
+        version = hello.get("mod_version")
+        if self._store.mod_version is None and isinstance(version, str):
+            self._store.mod_version = version
+
     # --- periodic -----------------------------------------------------------
 
     async def run_evaluator(self, interval: float = 1.0) -> None:

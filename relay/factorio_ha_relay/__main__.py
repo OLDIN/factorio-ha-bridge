@@ -25,9 +25,12 @@ async def main() -> None:
 
     rcon.on_connected = relay.on_rcon_connected
 
-    def seed(state: dict) -> None:
-        relay.seed(state)
-        _LOGGER.info("Continuing from retained state: %s", state.get("game_state"))
+    def seed(retained: dict) -> None:
+        if "state" in retained:
+            relay.seed(retained["state"])
+            _LOGGER.info("Continuing from retained state: %s", retained["state"].get("game_state"))
+        if "hello" in retained:
+            relay.seed_hello(retained["hello"])
 
     transport = await start_udp_listener(settings.udp_host, settings.udp_port, relay.handle_datagram)
     _LOGGER.info("Listening for the mod on udp://%s:%s", settings.udp_host, settings.udp_port)

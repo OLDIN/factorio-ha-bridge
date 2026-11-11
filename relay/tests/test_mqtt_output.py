@@ -183,13 +183,15 @@ async def test_config_callback_error_does_not_kill_output(broker_port):
 
 
 async def test_seed_delivered_on_first_connect(broker_port):
-    """Final review (re-graded): seed from the retained state once MQTT is reachable, before on_connected."""
+    """Seed from the retained state and hello once MQTT is reachable, before on_connected."""
     await _wait_broker(broker_port)
     sid = uuid.uuid4().hex[:6]
     first = MqttOutput(_settings(broker_port, sid))
     task = await _started(first, _noop)
     state = {"v": 1, "game_state": "running", "players_online": 2}
+    hello = {"v": 1, "server_id": sid, "relay_version": "0.1.0", "mod_version": "0.1.0"}
     await first.publish_state(state)
+    await first.publish_hello(hello)
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
 
@@ -204,7 +206,7 @@ async def test_seed_delivered_on_first_connect(broker_port):
     task = asyncio.create_task(second.start(_noop, on_connected, lambda s: order.append(("seed", s))))
     try:
         await asyncio.wait_for(connected.wait(), 5)
-        assert order == [("seed", state), "connected"]
+        assert order == [("seed", {"state": state, "hello": hello}), "connected"]
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)

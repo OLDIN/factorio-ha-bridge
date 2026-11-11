@@ -64,8 +64,8 @@ Topic prefix is fixed: `factorio`. JSON is compact (`separators=(",", ":")`).
 | `factorio/<id>/event` | no | `{"v":1,"event":"player_joined","tick":123,"time":"<ISO-8601 UTC>","data":{"player":"guest"}}` |
 | `factorio/<id>/config` | yes, written by HA | see above |
 
-On startup the relay reads its own retained `state` and continues from it, so a
-relay restart never blanks the last known values.
+On startup the relay reads its own retained `state` and `hello` and continues from
+them, so a relay restart never blanks the last known values or the mod version.
 
 ## Game state (computed by the relay every second)
 

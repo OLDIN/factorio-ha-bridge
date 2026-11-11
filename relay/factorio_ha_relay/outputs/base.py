@@ -7,7 +7,8 @@ from typing import Any, Protocol
 
 ConfigCallback = Callable[[dict[str, Any] | None], Awaitable[None]]
 ConnectedCallback = Callable[[], Awaitable[None]]
-SeedCallback = Callable[[dict[str, Any]], None]
+# {"state": {...}, "hello": {...}} — whatever this relay had retained before it restarted
+SeedCallback = Callable[[dict[str, dict[str, Any]]], None]
 
 
 class Output(Protocol):
@@ -16,8 +17,8 @@ class Output(Protocol):
     ) -> None:
         """Run forever: connect, call on_connected on every (re)connect, deliver configs.
 
-        On the first successful connection, hand the state this relay published before
-        it restarted (if any) to on_seed, before on_connected.
+        On the first successful connection, hand the state and hello this relay published
+        before it restarted (if any) to on_seed, before on_connected.
         """
 
     async def publish_hello(self, hello: dict[str, Any]) -> None: ...

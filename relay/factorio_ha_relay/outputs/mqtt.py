@@ -53,9 +53,9 @@ class MqttOutput:
             try:
                 async with self._new_client("main", will=will) as client:
                     if not self._seeded:
-                        retained = await self._receive_retained_state(client)
+                        retained = await self._receive_retained(client)
                         self._seeded = True
-                        if retained is not None and on_seed is not None:
+                        if retained and on_seed is not None:
                             on_seed(retained)
                     self._client = client
                     await client.publish(self.topic_availability, "online", qos=1, retain=True)
@@ -91,24 +91,32 @@ class MqttOutput:
             return None
         return config if isinstance(config, dict) else None
 
-    async def _receive_retained_state(self, client: aiomqtt.Client, timeout: float = 2.0) -> dict[str, Any] | None:
-        """Read our own retained state once (broker delivers it right after subscribing)."""
-        await client.subscribe(self.topic_state, qos=1)
+    async def _receive_retained(self, client: aiomqtt.Client, timeout: float = 2.0) -> dict[str, dict[str, Any]]:
+        """Read our own retained state and hello once (the broker sends them right after subscribing)."""
+        topics = {self.topic_state: "state", self.topic_hello: "hello"}
+        for topic in topics:
+            await client.subscribe(topic, qos=1)
+        found: dict[str, dict[str, Any]] = {}
         try:
             async with asyncio.timeout(timeout):
                 async for message in client.messages:
-                    if not message.topic.matches(self.topic_state):
+                    kind = topics.get(str(message.topic))
+                    if kind is None:
                         continue
                     try:
-                        state = json.loads(message.payload) if message.payload else None
+                        payload = json.loads(message.payload) if message.payload else None
                     except ValueError:
-                        return None
-                    return state if isinstance(state, dict) else None
+                        payload = None
+                    if isinstance(payload, dict):
+                        found[kind] = payload
+                    if len(found) == len(topics):
+                        break
         except TimeoutError:
-            return None
+            pass
         finally:
-            await client.unsubscribe(self.topic_state)
-        return None
+            for topic in topics:
+                await client.unsubscribe(topic)
+        return found
 
     async def _publish(self, topic: str, payload: str, retain: bool) -> None:
         client = self._client

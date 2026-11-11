@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from factorio_ha_relay import __version__
 from factorio_ha_relay.config import Settings
 from factorio_ha_relay.rcon import RconError
 from factorio_ha_relay.relay import Relay
@@ -133,7 +134,7 @@ async def test_no_config_nothing_sent_on_hello(env):
 async def test_hello_published_with_mod_version(env):
     relay, output, _, _ = env
     await relay.process_datagram(dg({"type": "hello", "tick": 1, "mod_version": "0.1.0"}))
-    assert output.hello[-1] == {"v": 1, "server_id": "t1", "relay_version": "0.1.0", "mod_version": "0.1.0"}
+    assert output.hello[-1] == {"v": 1, "server_id": "t1", "relay_version": __version__, "mod_version": "0.1.0"}
 
 
 async def test_event_published_with_time(env):
@@ -237,3 +238,19 @@ async def test_late_seed_fills_only_empty_fields(env):
     state = output.state[-1]
     assert (state["players_online"], state["game_state"]) == (0, "running")
     assert state["data"] == {"players": {"online": ["alice"]}}
+
+
+async def test_seed_hello_restores_mod_version(env):
+    """After a relay restart on a paused game the mod's hello may not come for a long time."""
+    relay, output, _, _ = env
+    relay.seed_hello({"v": 1, "server_id": "t1", "relay_version": "0.1.0", "mod_version": "0.1.0"})
+    await relay.on_output_connected()
+    assert output.hello[-1]["mod_version"] == "0.1.0"
+
+
+async def test_seed_hello_does_not_override_live_version(env):
+    relay, output, _, _ = env
+    await relay.process_datagram(dg({"type": "hello", "tick": 1, "mod_version": "0.2.0"}))
+    relay.seed_hello({"mod_version": "0.1.0"})
+    await relay.on_output_connected()
+    assert output.hello[-1]["mod_version"] == "0.2.0"
