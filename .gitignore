@@ -1,0 +1,12 @@
+# local dev Factorio server, build output
+dev/
+dist/
+# python
+.venv*/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+# misc
+.DS_Store
