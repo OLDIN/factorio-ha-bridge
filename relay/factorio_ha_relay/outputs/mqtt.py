@@ -11,7 +11,7 @@ from typing import Any
 import aiomqtt
 
 from ..config import Settings
-from .base import ConfigCallback, ConnectedCallback
+from .base import ConfigCallback, ConnectedCallback, SeedCallback
 
 _LOGGER = logging.getLogger(__name__)
 TOPIC_PREFIX = "factorio"
@@ -26,6 +26,7 @@ class MqttOutput:
         self._settings = settings
         self._reconnect_delay = reconnect_delay
         self._client: aiomqtt.Client | None = None
+        self._seeded = False
         base = f"{TOPIC_PREFIX}/{settings.server_id}"
         self.topic_availability = f"{base}/availability"
         self.topic_hello = f"{base}/hello"
@@ -44,11 +45,18 @@ class MqttOutput:
             **kwargs,
         )
 
-    async def start(self, on_config: ConfigCallback, on_connected: ConnectedCallback) -> None:
+    async def start(
+        self, on_config: ConfigCallback, on_connected: ConnectedCallback, on_seed: SeedCallback | None = None
+    ) -> None:
         will = aiomqtt.Will(self.topic_availability, "offline", qos=1, retain=True)
         while True:
             try:
                 async with self._new_client("main", will=will) as client:
+                    if not self._seeded:
+                        retained = await self._receive_retained_state(client)
+                        self._seeded = True
+                        if retained is not None and on_seed is not None:
+                            on_seed(retained)
                     self._client = client
                     await client.publish(self.topic_availability, "online", qos=1, retain=True)
                     await client.subscribe(self.topic_config, qos=1)
@@ -57,7 +65,10 @@ class MqttOutput:
                     try:
                         async for message in client.messages:
                             if message.topic.matches(self.topic_config):
-                                await on_config(self._parse_config(message.payload))
+                                try:
+                                    await on_config(self._parse_config(message.payload))
+                                except Exception:  # noqa: BLE001 - one bad config must not stop the relay
+                                    _LOGGER.exception("Handling the config failed")
                     except asyncio.CancelledError:
                         # Graceful stop: a clean disconnect does not trigger the last will.
                         with contextlib.suppress(aiomqtt.MqttError):
@@ -80,18 +91,23 @@ class MqttOutput:
             return None
         return config if isinstance(config, dict) else None
 
-    async def read_retained_state(self, timeout: float = 2.0) -> dict[str, Any] | None:
+    async def _receive_retained_state(self, client: aiomqtt.Client, timeout: float = 2.0) -> dict[str, Any] | None:
+        """Read our own retained state once (broker delivers it right after subscribing)."""
+        await client.subscribe(self.topic_state, qos=1)
         try:
-            async with self._new_client("seed") as client:
-                await client.subscribe(self.topic_state, qos=1)
-                async with asyncio.timeout(timeout):
-                    async for message in client.messages:
+            async with asyncio.timeout(timeout):
+                async for message in client.messages:
+                    if not message.topic.matches(self.topic_state):
+                        continue
+                    try:
                         state = json.loads(message.payload) if message.payload else None
-                        return state if isinstance(state, dict) else None
+                    except ValueError:
+                        return None
+                    return state if isinstance(state, dict) else None
         except TimeoutError:
             return None
-        except (aiomqtt.MqttError, ValueError) as err:
-            _LOGGER.warning("Could not read retained state: %s", err)
+        finally:
+            await client.unsubscribe(self.topic_state)
         return None
 
     async def _publish(self, topic: str, payload: str, retain: bool) -> None:

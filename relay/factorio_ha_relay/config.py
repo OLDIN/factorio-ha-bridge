@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+# Same rule as the Home Assistant config flow; also keeps MQTT wildcards out of topics.
+SERVER_ID_RE = re.compile(r"^[a-z0-9_-]+$")
 
 
 @dataclass(frozen=True)
@@ -26,9 +30,18 @@ class Settings:
         server_id = env.get("FHA_SERVER_ID", "").strip()
         if not server_id:
             raise ValueError("FHA_SERVER_ID is required")
+        if not SERVER_ID_RE.match(server_id):
+            raise ValueError(f"FHA_SERVER_ID must match [a-z0-9_-]+, got {server_id!r}")
         password = env.get("FHA_RCON_PASSWORD")
         if not password and env.get("FHA_RCON_PASSWORD_FILE"):
-            password = Path(env["FHA_RCON_PASSWORD_FILE"]).read_text().strip()
+            path = Path(env["FHA_RCON_PASSWORD_FILE"])
+            try:
+                password = path.read_text().strip()
+            except OSError as err:
+                raise ValueError(
+                    f"FHA_RCON_PASSWORD_FILE {path} is not a readable file ({err.strerror}); "
+                    "check the rconpw bind mount and its owner"
+                ) from err
         if not password:
             raise ValueError("FHA_RCON_PASSWORD or FHA_RCON_PASSWORD_FILE is required")
         return cls(

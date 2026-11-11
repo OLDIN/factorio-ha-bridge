@@ -78,8 +78,9 @@ async def test_heartbeat_timeout_pauses_with_reason(env):
 
 
 async def test_rcon_down_means_stopped(env):
-    relay, output, rcon, _ = env
+    relay, output, rcon, clock = env
     rcon.alive = False
+    clock.t += 16  # past the startup grace period
     await relay.evaluate()
     assert output.state[-1]["game_state"] == "stopped"
 
@@ -186,3 +187,53 @@ async def test_config_rcon_timeout_does_not_crash(env):
     relay, _, rcon, _ = env
     rcon.fail = True
     await relay.on_config(ON)  # must not raise
+
+
+SEEDED = {"v": 1, "game_state": "running", "game_state_reason": None,
+          "game_state_since": "2026-11-11T09:00:00+00:00", "tick": 50,
+          "players_online": 1, "data": {"players": {"online": ["alice"]}}}
+
+
+async def test_startup_grace_keeps_seeded_state(env):
+    """Final review #2: real startup order (RCON down, then up, then heartbeat) must not flap."""
+    relay, output, rcon, clock = env
+    relay.seed(SEEDED)
+    rcon.alive = False
+    await relay.evaluate()
+    rcon.alive = True
+    clock.t += 2
+    await relay.on_rcon_connected()
+    clock.t += 1
+    await relay.process_datagram(dg({"type": "heartbeat", "tick": 60, "players_online": 1}))
+    assert {(s["game_state"], s["game_state_since"]) for s in output.state} == {
+        ("running", "2026-11-11T09:00:00+00:00")}
+
+
+async def test_startup_grace_ends_with_real_state(env):
+    relay, output, _, clock = env
+    relay.seed(SEEDED)
+    clock.t += 16
+    await relay.evaluate()
+    assert (output.state[-1]["game_state"], output.state[-1]["game_state_reason"]) == ("paused", "unknown")
+    assert output.state[-1]["game_state_since"] != "2026-11-11T09:00:00+00:00"
+
+
+async def test_fresh_start_publishes_nothing_during_grace(env):
+    relay, output, rcon, clock = env
+    rcon.alive = False
+    await relay.evaluate()
+    assert output.state == []
+    clock.t += 16
+    await relay.evaluate()
+    assert output.state[-1]["game_state"] == "stopped"
+
+
+async def test_late_seed_fills_only_empty_fields(env):
+    """Broker came up after the relay: the retained state must not override fresh data."""
+    relay, output, _, _ = env
+    await relay.process_datagram(dg({"type": "heartbeat", "tick": 300, "players_online": 0}))
+    relay.seed({**SEEDED, "players_online": 3, "game_state": "paused"})
+    await relay.on_output_connected()
+    state = output.state[-1]
+    assert (state["players_online"], state["game_state"]) == (0, "running")
+    assert state["data"] == {"players": {"online": ["alice"]}}

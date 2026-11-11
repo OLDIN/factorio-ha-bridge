@@ -7,14 +7,18 @@ from typing import Any, Protocol
 
 ConfigCallback = Callable[[dict[str, Any] | None], Awaitable[None]]
 ConnectedCallback = Callable[[], Awaitable[None]]
+SeedCallback = Callable[[dict[str, Any]], None]
 
 
 class Output(Protocol):
-    async def start(self, on_config: ConfigCallback, on_connected: ConnectedCallback) -> None:
-        """Run forever: connect, call on_connected on every (re)connect, deliver configs."""
+    async def start(
+        self, on_config: ConfigCallback, on_connected: ConnectedCallback, on_seed: SeedCallback | None = None
+    ) -> None:
+        """Run forever: connect, call on_connected on every (re)connect, deliver configs.
 
-    async def read_retained_state(self, timeout: float = 2.0) -> dict[str, Any] | None:
-        """Return the last state this relay published before it restarted, if any."""
+        On the first successful connection, hand the state this relay published before
+        it restarted (if any) to on_seed, before on_connected.
+        """
 
     async def publish_hello(self, hello: dict[str, Any]) -> None: ...
 

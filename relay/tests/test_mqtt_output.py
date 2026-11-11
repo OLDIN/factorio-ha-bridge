@@ -76,7 +76,10 @@ async def test_state_retained_and_read_back(broker_port):
     state = {"v": 1, "game_state": "running", "players_online": 1}
     await out.publish_state(state)
     try:
-        assert await MqttOutput(_settings(broker_port, sid)).read_retained_state() == state
+        async with aiomqtt.Client("127.0.0.1", broker_port) as client:
+            await client.subscribe(f"factorio/{sid}/state")
+            msg = await asyncio.wait_for(anext(aiter(client.messages)), 5)
+            assert msg.retain and json.loads(msg.payload) == state
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -96,10 +99,22 @@ async def test_availability_online_retained(broker_port):
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_read_retained_state_none_when_empty(broker_port):
+async def test_no_seed_when_nothing_retained(broker_port):
     await _wait_broker(broker_port)
+    seeds: list = []
+    connected = asyncio.Event()
+
+    async def on_connected():
+        connected.set()
+
     out = MqttOutput(_settings(broker_port, uuid.uuid4().hex[:6]))
-    assert await out.read_retained_state(timeout=0.5) is None
+    task = asyncio.create_task(out.start(_noop, on_connected, seeds.append))
+    try:
+        await asyncio.wait_for(connected.wait(), 10)
+        assert seeds == []
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_config_delivered_and_cleared(broker_port):
@@ -137,3 +152,59 @@ async def test_graceful_stop_publishes_offline(broker_port):
         await client.subscribe(f"factorio/{sid}/availability")
         msg = await asyncio.wait_for(anext(aiter(client.messages)), 5)
         assert msg.payload == b"offline"
+
+
+async def test_config_callback_error_does_not_kill_output(broker_port):
+    """Final review #1: an exception from on_config must not tear down the MQTT loop."""
+    await _wait_broker(broker_port)
+    sid = uuid.uuid4().hex[:6]
+    configs: list = []
+
+    async def on_config(cfg):
+        configs.append(cfg)
+        if len(configs) == 1:
+            raise RuntimeError("boom")
+
+    task = await _started(MqttOutput(_settings(broker_port, sid)), on_config)
+    try:
+        async with aiomqtt.Client("127.0.0.1", broker_port) as client:
+            await client.publish(f"factorio/{sid}/config", '{"v":1,"categories":{}}', qos=1, retain=True)
+            await asyncio.sleep(0.3)
+            await client.publish(f"factorio/{sid}/config", '{"v":1,"categories":{"players":true}}', qos=1, retain=True)
+        for _ in range(50):
+            if len(configs) >= 2:
+                break
+            await asyncio.sleep(0.1)
+        assert len(configs) == 2
+        assert not task.done()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_seed_delivered_on_first_connect(broker_port):
+    """Final review (re-graded): seed from the retained state once MQTT is reachable, before on_connected."""
+    await _wait_broker(broker_port)
+    sid = uuid.uuid4().hex[:6]
+    first = MqttOutput(_settings(broker_port, sid))
+    task = await _started(first, _noop)
+    state = {"v": 1, "game_state": "running", "players_online": 2}
+    await first.publish_state(state)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    order: list = []
+    connected = asyncio.Event()
+
+    async def on_connected():
+        order.append("connected")
+        connected.set()
+
+    second = MqttOutput(_settings(broker_port, sid))
+    task = asyncio.create_task(second.start(_noop, on_connected, lambda s: order.append(("seed", s))))
+    try:
+        await asyncio.wait_for(connected.wait(), 5)
+        assert order == [("seed", state), "connected"]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

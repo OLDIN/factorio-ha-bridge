@@ -23,11 +23,11 @@ async def main() -> None:
     rcon = RconLink(settings.rcon_host, settings.rcon_port, settings.rcon_password)
     relay = Relay(settings, output, rcon)
 
-    seed = await output.read_retained_state()
-    if seed:
-        relay.seed(seed)
-        _LOGGER.info("Continuing from retained state: %s", seed.get("game_state"))
     rcon.on_connected = relay.on_rcon_connected
+
+    def seed(state: dict) -> None:
+        relay.seed(state)
+        _LOGGER.info("Continuing from retained state: %s", state.get("game_state"))
 
     transport = await start_udp_listener(settings.udp_host, settings.udp_port, relay.handle_datagram)
     _LOGGER.info("Listening for the mod on udp://%s:%s", settings.udp_host, settings.udp_port)
@@ -40,7 +40,7 @@ async def main() -> None:
     try:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(rcon.run())
-            tg.create_task(output.start(relay.on_config, relay.on_output_connected))
+            tg.create_task(output.start(relay.on_config, relay.on_output_connected, seed))
             tg.create_task(relay.run_evaluator())
     except asyncio.CancelledError:
         _LOGGER.info("Shutting down")

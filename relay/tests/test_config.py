@@ -22,3 +22,17 @@ def test_requires_server_id():
 def test_requires_rcon_password():
     with pytest.raises(ValueError):
         Settings.from_env({"FHA_SERVER_ID": "main"})
+
+
+@pytest.mark.parametrize("server_id", ["MAIN", "a/b", "x+y", "my server", "#"])
+def test_server_id_must_match_ha_rules(server_id):
+    """Final review: HA discovery accepts only [a-z0-9_-]+; MQTT wildcards break topics."""
+    with pytest.raises(ValueError, match="FHA_SERVER_ID"):
+        Settings.from_env({"FHA_SERVER_ID": server_id, "FHA_RCON_PASSWORD": "x"})
+
+
+@pytest.mark.parametrize("make", [lambda d: d / "missing", lambda d: d])
+def test_rcon_password_file_problems_are_clear(tmp_path, make):
+    """Final review #3: a wrong bind path (docker creates a directory) must give a clear error."""
+    with pytest.raises(ValueError, match="FHA_RCON_PASSWORD_FILE"):
+        Settings.from_env({"FHA_SERVER_ID": "main", "FHA_RCON_PASSWORD_FILE": str(make(tmp_path))})

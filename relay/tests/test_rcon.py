@@ -99,3 +99,25 @@ async def test_on_connected_can_exec(server, link_factory):
     link.on_connected = resend
     await wait_for(lambda: answers, timeout=1.0)
     assert answers == ["ok"]
+
+
+async def test_concurrent_exec_when_connection_drops_raises_rcon_error(server, link_factory):
+    """Final review #1: the exec waiting for the lock must get RconError, not AttributeError."""
+    server.silent.update({CMD, "/second"})
+    link = link_factory(server.port)
+    await wait_for(lambda: link.alive)
+    first = asyncio.create_task(link.exec(CMD, timeout=2))
+    second = asyncio.create_task(link.exec("/second", timeout=2))
+    await asyncio.sleep(0.05)
+    await server.stop()
+    results = await asyncio.gather(first, second, return_exceptions=True)
+    assert all(isinstance(r, RconError) for r in results), results
+
+
+async def test_auth_failure_logged_once_as_warning(server, link_factory, caplog):
+    """Final review #4: a wrong password must be visible at WARNING, without log spam."""
+    caplog.set_level("DEBUG", logger="factorio_ha_relay.rcon")
+    link_factory(server.port, password="nope")
+    await asyncio.sleep(0.4)  # several retries at retry_delay=0.05
+    warnings = [r for r in caplog.records if r.levelname == "WARNING" and "authentication failed" in r.getMessage()]
+    assert len(warnings) == 1

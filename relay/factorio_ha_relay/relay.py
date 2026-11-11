@@ -58,6 +58,7 @@ class Relay:
         self._since = utcnow()
         self._published: dict[str, Any] | None = None
         self._tasks: set[asyncio.Task[None]] = set()
+        self._started = monotonic()
 
     # --- inputs -------------------------------------------------------------
 
@@ -105,18 +106,22 @@ class Relay:
         await self._publish_state(force=True)
 
     def seed(self, state: dict[str, Any]) -> None:
-        """Continue from the state published before a relay restart."""
+        """Continue from the state published before a relay restart.
+
+        Fills only what is still unknown: when the broker comes up after the relay,
+        fresh data from the game must win over the retained copy.
+        """
         players = state.get("players_online")
-        if isinstance(players, int) and not isinstance(players, bool):
+        if self._store.players_online is None and isinstance(players, int) and not isinstance(players, bool):
             self._store.players_online = players
         tick = state.get("tick")
-        if isinstance(tick, int) and not isinstance(tick, bool):
+        if self._store.tick is None and isinstance(tick, int) and not isinstance(tick, bool):
             self._store.tick = tick
         data = state.get("data")
-        if isinstance(data, dict):
+        if not self._store.data and isinstance(data, dict):
             self._store.data = dict(data)
         game_state, since = state.get("game_state"), state.get("game_state_since")
-        if isinstance(game_state, str) and isinstance(since, str):
+        if self._game_state is None and isinstance(game_state, str) and isinstance(since, str):
             self._game_state = (game_state, state.get("game_state_reason"))
             self._since = since
 
@@ -132,7 +137,12 @@ class Relay:
         current = compute_game_state(
             self._rcon.alive, age, self._store.players_online, self._settings.heartbeat_timeout
         )
-        if current != self._game_state:
+        # Right after start RCON is not connected yet and no heartbeat has arrived, so
+        # anything but "running" is not trustworthy: keep the seeded state meanwhile.
+        in_grace = self._monotonic() - self._started < self._settings.heartbeat_timeout
+        if in_grace and current[0] != "running":
+            pass
+        elif current != self._game_state:
             _LOGGER.info("Game state: %s (%s)", current[0], current[1])
             self._game_state = current
             self._since = self._utcnow()
