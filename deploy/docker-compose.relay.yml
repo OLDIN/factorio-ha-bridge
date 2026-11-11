@@ -11,9 +11,16 @@ services:
     environment:
       FHA_RCON_PASSWORD_FILE: /run/rconpw
     volumes:
-      # Factorio data dir as mounted into factoriotools/factorio (its README uses /opt/factorio).
-      - /opt/factorio/config/rconpw:/run/rconpw:ro
+      # rconpw from the Factorio data dir. factoriotools' README uses /opt/factorio;
+      # set FACTORIO_DATA_DIR (shell or the compose project's .env) if yours differs.
+      # create_host_path: false -> a wrong path fails loudly instead of creating a directory.
+      - type: bind
+        source: ${FACTORIO_DATA_DIR:-/opt/factorio}/config/rconpw
+        target: /run/rconpw
+        read_only: true
+        bind:
+          create_host_path: false
     # Must be able to read rconpw: use the owner of that file
-    # (stat -c %u:%g /opt/factorio/config/rconpw); factoriotools defaults to 845.
+    # (stat -c %u:%g "$FACTORIO_DATA_DIR/config/rconpw"); factoriotools defaults to 845.
     user: "845:845"
     mem_limit: 96m
