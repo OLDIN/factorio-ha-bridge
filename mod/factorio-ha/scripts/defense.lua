@@ -1,4 +1,5 @@
--- `defense` category: turrets (total / no ammo / no power) and damaged walls per planet.
+-- `defense` category: turrets (total / no ammo / no power), damaged walls and the running
+-- attack per planet.
 -- Turret registry, wall sets and hysteresis state live in `storage` and change only from
 -- game events / on_nth_tick handlers (identical on every peer). Module-local state only
 -- throttles UDP.
@@ -8,6 +9,7 @@ local config = require("scripts.config")
 local scanner = require("scripts.logic.scanner")
 local hysteresis = require("scripts.logic.hysteresis")
 local fill = require("scripts.logic.fill")
+local attacks = require("scripts.logic.attacks")
 
 local defense = {}
 
@@ -18,6 +20,8 @@ local FILL_PER_STEP = 200   -- turrets registered per scanner step during the in
 local MAX_POSITIONS = 5
 local TURRET_TYPES = { "ammo-turret", "electric-turret", "fluid-turret", "artillery-turret" }
 local WALL_TYPES = { wall = true, gate = true }
+-- Dying entities of the player force that are not buildings: not a "loss" of the base.
+local NOT_LOSSES = { character = true, ["combat-robot"] = true, ["construction-robot"] = true, ["logistic-robot"] = true }
 
 -- Storage layout (all plain data, created lazily so old saves work):
 -- storage.defense = {
@@ -27,6 +31,7 @@ local WALL_TYPES = { wall = true, gate = true }
 --   walls = {planet = {n = count, set = {unit_number = entity}}},
 --   hysteresis = {},
 -- }
+-- storage.attacks = logic/attacks state (running attacks), dropped when `defense` is turned off.
 local function state()
   local d = storage.defense
   if not d then
@@ -148,6 +153,7 @@ end
 function defense.scan_step()
   if not config.enabled("defense") then
     storage.defense = nil -- stop scanning, drop the registry
+    storage.attacks = nil
     return
   end
   local d = state()
@@ -211,10 +217,48 @@ local function pos(entity)
   return { round(p.x), round(p.y) }
 end
 
+-- Hot path (thousands of calls in a big attack): a few table lookups per loss.
+function defense.on_entity_died(e)
+  local entity, killer = e.entity, e.force
+  if not (killer and entity.valid) then return end
+  if entity.force.name ~= "player" or NOT_LOSSES[entity.type] then return end
+  if not config.enabled("defense") then return end
+  if not game.forces.player.is_enemy(killer) then return end
+  local surface = entity.surface
+  local planet = planet_name(surface)
+  if not planet then return end
+  local state = storage.attacks
+  if not state then state = attacks.new(); storage.attacks = state end
+  local p = entity.position
+  local started = attacks.on_loss(state, {
+    tick = game.tick, surface = surface.name, planet = planet, x = p.x, y = p.y, name = entity.name,
+  })
+  if started then
+    transport.send({ type = "event", event = "attack_started", data = started })
+  end
+end
+
+-- Every 300 ticks: end quiet attacks and push the running ones (at most this often).
+function defense.tick_attacks()
+  local state = storage.attacks
+  if not state then return end
+  if not config.enabled("defense") then
+    storage.attacks = nil
+    return
+  end
+  local ended = attacks.expire(state, game.tick)
+  for _, e in ipairs(ended) do
+    transport.send({ type = "event", event = "attack_ended", data = e })
+  end
+  if #ended > 0 or attacks.active(state) then defense.refresh() end
+end
+
 function defense.collect()
   local out = {}
   local d = storage.defense
-  if not d then return { by_planet = out } end
+  local astate = storage.attacks
+  if not d and not astate then return { by_planet = out } end
+  d = d or { counts = {}, no_ammo_ids = {}, walls = {}, turrets = scanner.new() }
   for planet, c in pairs(d.counts) do
     if c.total > 0 then
       local at = {}
@@ -235,6 +279,16 @@ function defense.collect()
     end
     out[planet] = out[planet] or {}
     out[planet].walls_damaged = { count = w.n, at = at }
+  end
+  if astate then
+    for _, a in ipairs(astate.list) do
+      if not out[a.planet] then
+        out[a.planet] = {}
+      end
+    end
+    for planet, p in pairs(out) do
+      p.attack = attacks.current(astate, planet)
+    end
   end
   -- planets with turrets always carry walls_damaged, so consumers see 0 after a repair
   for planet, p in pairs(out) do

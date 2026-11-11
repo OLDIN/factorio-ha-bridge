@@ -8,6 +8,7 @@ local planets = require("scripts.planets")
 local research = require("scripts.research")
 local evolution = require("scripts.evolution")
 local defense = require("scripts.defense")
+local players = require("scripts.players")
 
 local HEARTBEAT_TICKS = 300 -- 5 s
 local SNAPSHOT_TICKS = 3600 -- 60 s
@@ -16,19 +17,10 @@ local CHECK_TICKS = 600 -- 10 s: research progress, evolution, damaged walls
 -- Session-local: only decides whether the server sends a snapshot (server-only UDP), no desync.
 local config_seen_this_session = false
 
-local function online_names()
-  local names = {}
-  for _, player in pairs(game.connected_players) do
-    names[#names + 1] = player.name
-  end
-  table.sort(names)
-  return names
-end
-
 local function collect()
   local data = {}
   if config.enabled("players") then
-    data.players = { online = online_names() }
+    data.players = players.collect()
   end
   if config.enabled("planets") then data.planets = planets.collect() end
   if config.enabled("research") then data.research = research.snapshot() end
@@ -53,7 +45,7 @@ local function player_event(event_name, player_index)
   send_heartbeat()
   if not config.enabled("players") then return end
   local player = game.get_player(player_index)
-  transport.update_if_changed("players", { online = online_names() })
+  players.refresh()
   transport.send({ type = "event", event = event_name, data = { player = player and player.name or "?" } })
 end
 
@@ -67,13 +59,18 @@ script.on_configuration_changed(function()
   send_hello("configuration_changed")
 end)
 
-script.on_nth_tick(HEARTBEAT_TICKS, send_heartbeat)
+-- Every 5 s: heartbeat, and attacks (running ones are pushed, quiet ones ended).
+script.on_nth_tick(HEARTBEAT_TICKS, function()
+  send_heartbeat()
+  defense.tick_attacks()
+end)
 
 script.on_nth_tick(CHECK_TICKS, function()
   research.refresh(false)
   evolution.refresh()
   defense.check_walls()
   defense.refresh()
+  players.refresh() -- AFK minutes
 end)
 
 -- Turret scanner: one portion per step (a lap takes CHECK_TICKS).
@@ -102,6 +99,9 @@ script.on_event(defines.events.script_raised_built, defense.on_built, turret_fil
 script.on_event(defines.events.on_object_destroyed, defense.on_object_destroyed)
 script.on_event(defines.events.on_entity_damaged, defense.on_entity_damaged,
   { { filter = "type", type = "wall" }, { filter = "type", type = "gate" } })
+
+script.on_event(defines.events.on_entity_died, defense.on_entity_died)
+script.on_event(defines.events.on_player_died, players.on_died)
 
 script.on_event(defines.events.on_player_joined_game, function(e)
   player_event("player_joined", e.player_index)
