@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Local headless Factorio server for developing the factorio-ha mod.
 # Vanilla (base only) + factorio-ha, separate write-data dir under dev/ so it
-# never touches your normal game. RCON on 127.0.0.1:27015 (password "dev"),
+# never touches your normal game. RCON only on 127.0.0.1:27015 (password "dev"),
 # Lua UDP enabled on 34198 (the mod sends to 127.0.0.1:34199).
 #
 #   scripts/dev-server.sh               # auto_pause off (game keeps running)
@@ -46,4 +46,5 @@ if [ ! -f "$DEV/saves/dev.zip" ]; then
 fi
 exec "$FACTORIO_BIN" "${COMMON[@]}" --start-server "$DEV/saves/dev.zip" \
   --server-settings "$DEV/server-settings.json" \
-  --enable-lua-udp=34198 --rcon-port 27015 --rcon-password dev
+  --bind 127.0.0.1 --enable-lua-udp=34198 \
+  --rcon-bind 127.0.0.1:27015 --rcon-password dev
