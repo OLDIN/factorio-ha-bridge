@@ -10,6 +10,7 @@ local scanner = require("scripts.logic.scanner")
 local hysteresis = require("scripts.logic.hysteresis")
 local fill = require("scripts.logic.fill")
 local attacks = require("scripts.logic.attacks")
+local walls = require("scripts.logic.walls")
 
 local defense = {}
 
@@ -18,6 +19,9 @@ defense.LAP_STEPS = 60       -- a full lap takes 60 steps = 600 ticks
 local HOLD_TICKS = 600
 local FILL_PER_STEP = 200   -- turrets registered per scanner step during the initial fill
 local MAX_POSITIONS = 5
+-- Damaged-wall repair check: a portion per scanner step, ceil(N / LAP_STEPS) walls with a
+-- floor, so a lap over 20 000 walls takes 60 steps = 600 ticks (turrets work the same way).
+local WALL_MIN_BATCH = 50
 local TURRET_TYPES = { "ammo-turret", "electric-turret", "fluid-turret", "artillery-turret" }
 local WALL_TYPES = { wall = true, gate = true }
 -- Dying entities of the player force that are not buildings: not a "loss" of the base.
@@ -28,16 +32,29 @@ local NOT_LOSSES = { character = true, ["combat-robot"] = true, ["construction-r
 --   turrets = scanner registry of {id, entity, planet, no_ammo, no_power},
 --   counts = {planet = {total, no_ammo, no_power}}, no_ammo_ids = {planet = {id = true}},
 --   fill = nil | logic/fill state, filled = bool,
---   walls = {planet = {n = count, set = {unit_number = entity}}},
+--   walls = logic/walls registry of damaged walls (scanner + per-planet counts and ids),
 --   hysteresis = {},
 -- }
 -- storage.attacks = logic/attacks state (running attacks), dropped when `defense` is turned off.
+-- Old saves kept walls as {planet = {n, set = {unit_number = entity}}}: convert.
+local function migrate(d)
+  if walls.is_registry(d.walls) then return end
+  local old, new = d.walls or {}, walls.new()
+  for planet, w in pairs(old) do
+    for id, entity in pairs(w.set or {}) do
+      if entity.valid then walls.add(new, id, entity, planet) end
+    end
+  end
+  d.walls = new
+end
+
 local function state()
   local d = storage.defense
   if not d then
-    d = { turrets = scanner.new(), counts = {}, no_ammo_ids = {}, walls = {}, hysteresis = {}, filled = false }
+    d = { turrets = scanner.new(), counts = {}, no_ammo_ids = {}, walls = walls.new(), hysteresis = {}, filled = false }
     storage.defense = d
   end
+  migrate(d)
   return d
 end
 
@@ -149,6 +166,17 @@ local function emit_events(d, tick)
   end
 end
 
+local function wall_done(entity)
+  return not entity.valid or entity.health == nil or entity.health >= entity.max_health
+end
+
+local function check_walls(d)
+  local n = walls.total(d.walls)
+  if n > 0 then
+    walls.step(d.walls, math.max(WALL_MIN_BATCH, math.ceil(n / defense.LAP_STEPS)), wall_done)
+  end
+end
+
 -- Called every SCAN_TICKS ticks.
 function defense.scan_step()
   if not config.enabled("defense") then
@@ -160,6 +188,7 @@ function defense.scan_step()
   if not d.filled and not d.fill then start_fill(d) end
   if d.fill then fill_step(d) end
   local n = scanner.count(d.turrets)
+  check_walls(d)
   if n > 0 then
     for _, item in ipairs(scanner.next_batch(d.turrets, math.ceil(n / defense.LAP_STEPS))) do
       scan_item(d, item)
@@ -188,28 +217,7 @@ function defense.on_entity_damaged(e)
   local planet = planet_name(entity.surface)
   local id = entity.unit_number
   if not (planet and id) then return end
-  local d = state()
-  local w = d.walls[planet]
-  if not w then w = { n = 0, set = {} }; d.walls[planet] = w end
-  if not w.set[id] then
-    w.set[id] = entity
-    w.n = w.n + 1
-  end
-end
-
--- Every 600 ticks: drop repaired / destroyed walls from the sets.
-function defense.check_walls()
-  local d = storage.defense
-  if not d then return end
-  for planet, w in pairs(d.walls) do
-    for id, entity in pairs(w.set) do
-      if not entity.valid or entity.health == nil or entity.health >= entity.max_health then
-        w.set[id] = nil
-        w.n = w.n - 1
-      end
-    end
-    if w.n == 0 then d.walls[planet] = nil end
-  end
+  walls.add(state().walls, id, entity, planet)
 end
 
 local function pos(entity)
@@ -258,7 +266,8 @@ function defense.collect()
   local d = storage.defense
   local astate = storage.attacks
   if not d and not astate then return { by_planet = out } end
-  d = d or { counts = {}, no_ammo_ids = {}, walls = {}, turrets = scanner.new() }
+  if d then migrate(d) end
+  d = d or { counts = {}, no_ammo_ids = {}, walls = walls.new(), turrets = scanner.new() }
   for planet, c in pairs(d.counts) do
     if c.total > 0 then
       local at = {}
@@ -271,14 +280,14 @@ function defense.collect()
       out[planet].turrets = { total = c.total, no_ammo = c.no_ammo, no_power = c.no_power, no_ammo_at = at }
     end
   end
-  for planet, w in pairs(d.walls) do
+  for planet, n in pairs(d.walls.counts) do
     local at = {}
-    for _, entity in pairs(w.set) do
-      if #at >= MAX_POSITIONS then break end
-      if entity.valid then at[#at + 1] = pos(entity) end
+    for _, id in ipairs(walls.some_ids(d.walls, planet, MAX_POSITIONS)) do
+      local entity = walls.entity(d.walls, id)
+      if entity and entity.valid then at[#at + 1] = pos(entity) end
     end
     out[planet] = out[planet] or {}
-    out[planet].walls_damaged = { count = w.n, at = at }
+    out[planet].walls_damaged = { count = n, at = at }
   end
   if astate then
     for _, a in ipairs(astate.list) do
@@ -302,7 +311,7 @@ function defense.snapshot()
   return defense.collect()
 end
 
--- Periodic push of changes (every 600 ticks, after check_walls).
+-- Periodic push of changes (every 600 ticks).
 function defense.refresh()
   if not config.enabled("defense") then return end
   transport.update_if_changed("defense", defense.collect())

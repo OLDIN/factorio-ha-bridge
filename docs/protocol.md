@@ -134,7 +134,9 @@ dropping the connection, because a paused game may not answer them.
   force. `no_power` counts `no_power` and `low_power` statuses. Turrets are scanned in
   batches every 10 ticks (a full lap per 600 ticks); the registry is filled in portions on
   first enable. `walls_damaged` covers `wall` and `gate`: a wall is added when it takes
-  damage and removed by a 600-tick check once repaired or destroyed.
+  damage and removed once repaired or destroyed. Repairs are detected by the same 10-tick
+  scanner step, in portions of about 1/60 of the damaged walls (at least 50), so a pass takes
+  about 600 ticks.
 - `players.afk_minutes`: only players AFK for at least one whole minute.
 - `attack` is absent when there is no attack. It is the attack with the most recent loss
   on that planet. Position lists (`no_ammo_at`, `at`) hold at most 5 entries.

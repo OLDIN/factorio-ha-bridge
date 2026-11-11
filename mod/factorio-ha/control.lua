@@ -12,7 +12,7 @@ local players = require("scripts.players")
 
 local HEARTBEAT_TICKS = 300 -- 5 s
 local SNAPSHOT_TICKS = 3600 -- 60 s
-local CHECK_TICKS = 600 -- 10 s: research progress, evolution, damaged walls
+local CHECK_TICKS = 600 -- 10 s: research progress, evolution, defense push
 
 -- Session-local: only decides whether the server sends a snapshot (server-only UDP), no desync.
 local config_seen_this_session = false
@@ -68,7 +68,6 @@ end)
 script.on_nth_tick(CHECK_TICKS, function()
   research.refresh(false)
   evolution.refresh()
-  defense.check_walls()
   defense.refresh()
   players.refresh() -- AFK minutes
 end)
