@@ -18,6 +18,21 @@ Status: proof of concept. Protocol: [docs/protocol.md](docs/protocol.md).
 | Deployment next to `factoriotools/factorio` | `deploy/` |
 | Local dev server, packaging | `scripts/` |
 
+## What the mod reports
+
+Each category is switched on from Home Assistant; nothing is sent until the relay
+delivers a config.
+
+| Category | Shows |
+|---|---|
+| `players` | who is online, AFK minutes; events `player_joined`, `player_left`, `player_died` |
+| `planets` | every space location: kind, position, parent, locked / unlocked / built |
+| `research` | current research (progress, unlocked planets), queue; event `research_finished` |
+| `evolution` | enemy evolution per planet |
+| `defense` | per planet: turrets without ammo or power, damaged walls, running attack; events `attack_started`, `attack_ended`, `turrets_no_ammo`, `turrets_ok` |
+
+Details and the wire format: [docs/protocol.md](docs/protocol.md).
+
 ## Deploy (next to a factoriotools/factorio container)
 
 1. Install the mod on the server (mod portal: `factorio-ha`).
