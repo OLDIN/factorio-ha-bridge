@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # push the mod-vX.Y.Z tag
+  contents: read # the vX.Y.Z tag and GitHub Release come from release.yml
 
 concurrency:
   group: publish-mod
@@ -70,9 +70,3 @@ jobs:
           result=$(curl -sS -X POST "$url" -F "file=@dist/${NAME}_${VERSION}.zip")
           echo "$result" | jq -e '.success == true' > /dev/null || { echo "::error::upload failed: $result"; exit 1; }
           echo "Published $NAME $VERSION"
-
-      - name: Tag the release
-        if: steps.portal.outputs.published == 'false'
-        run: |
-          git tag "mod-v${{ steps.mod.outputs.version }}"
-          git push origin "mod-v${{ steps.mod.outputs.version }}"
