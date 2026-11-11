@@ -1,0 +1,5 @@
+---------------------------------------------------------------------------------------------------
+Version: 0.1.0
+Date: 2026-11-11
+  Features:
+    - Proof of concept: hello, heartbeat, players category and the configuration command used by the relay.
