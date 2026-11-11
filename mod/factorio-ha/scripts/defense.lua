@@ -7,12 +7,14 @@ local transport = require("scripts.transport")
 local config = require("scripts.config")
 local scanner = require("scripts.logic.scanner")
 local hysteresis = require("scripts.logic.hysteresis")
+local fill = require("scripts.logic.fill")
 
 local defense = {}
 
 defense.SCAN_TICKS = 10      -- scanner step interval
 defense.LAP_STEPS = 60       -- a full lap takes 60 steps = 600 ticks
 local HOLD_TICKS = 600
+local FILL_PER_STEP = 200   -- turrets registered per scanner step during the initial fill
 local MAX_POSITIONS = 5
 local TURRET_TYPES = { "ammo-turret", "electric-turret", "fluid-turret", "artillery-turret" }
 local WALL_TYPES = { wall = true, gate = true }
@@ -21,7 +23,7 @@ local WALL_TYPES = { wall = true, gate = true }
 -- storage.defense = {
 --   turrets = scanner registry of {id, entity, planet, no_ammo, no_power},
 --   counts = {planet = {total, no_ammo, no_power}}, no_ammo_ids = {planet = {id = true}},
---   fill = nil | {surfaces = {names...}}, filled = bool,
+--   fill = nil | logic/fill state, filled = bool,
 --   walls = {planet = {n = count, set = {unit_number = entity}}},
 --   hysteresis = {},
 -- }
@@ -103,26 +105,28 @@ local function scan_item(d, item)
   apply_state(d, entity.unit_number, item, no_ammo, no_power)
 end
 
--- Initial fill: one surface per step, so a huge multi-surface base is never walked in one tick.
+-- Initial fill: one find per surface (C++ side), then at most FILL_PER_STEP turrets
+-- registered per scanner step; the found list and cursor live in storage.
 local function start_fill(d)
   local names = {}
   for _, surface in pairs(game.surfaces) do
     if surface.planet then names[#names + 1] = surface.name end
   end
   table.sort(names)
-  d.fill = { surfaces = names }
+  d.fill = fill.new(names)
+end
+
+local function find_turrets(name)
+  local surface = game.get_surface(name)
+  if not (surface and surface.valid) then return {} end
+  return surface.find_entities_filtered({ force = "player", type = TURRET_TYPES })
 end
 
 local function fill_step(d)
-  local name = table.remove(d.fill.surfaces)
-  local surface = name and game.get_surface(name)
-  local _unused = game.get_surface(name)
-  if surface and surface.valid then
-    for _, entity in pairs(surface.find_entities_filtered({ force = "player", type = TURRET_TYPES })) do
-      register(d, entity)
-    end
-  end
-  if #d.fill.surfaces == 0 then d.fill, d.filled = nil, true end
+  fill.step(d.fill, FILL_PER_STEP, find_turrets, function(entity)
+    if entity.valid then register(d, entity) end -- may have died since the find
+  end)
+  if fill.is_done(d.fill) then d.fill, d.filled = nil, true end
 end
 
 local function emit_events(d, tick)
