@@ -4,9 +4,13 @@
 
 local transport = require("scripts.transport")
 local config = require("scripts.config")
+local planets = require("scripts.planets")
+local research = require("scripts.research")
+local evolution = require("scripts.evolution")
 
 local HEARTBEAT_TICKS = 300 -- 5 s
 local SNAPSHOT_TICKS = 3600 -- 60 s
+local CHECK_TICKS = 600 -- 10 s: research progress and evolution
 
 -- Session-local: only decides whether the server sends a snapshot (server-only UDP), no desync.
 local config_seen_this_session = false
@@ -25,6 +29,9 @@ local function collect()
   if config.enabled("players") then
     data.players = { online = online_names() }
   end
+  if config.enabled("planets") then data.planets = planets.collect() end
+  if config.enabled("research") then data.research = research.snapshot() end
+  if config.enabled("evolution") then data.evolution = evolution.snapshot() end
   return data
 end
 
@@ -60,10 +67,23 @@ end)
 
 script.on_nth_tick(HEARTBEAT_TICKS, send_heartbeat)
 
+script.on_nth_tick(CHECK_TICKS, function()
+  research.refresh(false)
+  evolution.refresh()
+end)
+
 script.on_nth_tick(SNAPSHOT_TICKS, function()
   send_hello("periodic")
   if config.any_enabled() then send_snapshot() end
 end)
+
+script.on_event(defines.events.on_research_finished, function(e)
+  research.on_finished(e)
+  planets.refresh() -- a finished discovery tech unlocks bodies
+end)
+
+script.on_event(defines.events.on_surface_created, planets.refresh)
+script.on_event(defines.events.on_surface_deleted, planets.refresh)
 
 script.on_event(defines.events.on_player_joined_game, function(e)
   player_event("player_joined", e.player_index)
