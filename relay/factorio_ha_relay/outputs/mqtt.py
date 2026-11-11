@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from typing import Any
@@ -53,9 +54,15 @@ class MqttOutput:
                     await client.subscribe(self.topic_config, qos=1)
                     _LOGGER.info("MQTT connected to %s:%s", self._settings.mqtt_host, self._settings.mqtt_port)
                     await on_connected()
-                    async for message in client.messages:
-                        if message.topic.matches(self.topic_config):
-                            await on_config(self._parse_config(message.payload))
+                    try:
+                        async for message in client.messages:
+                            if message.topic.matches(self.topic_config):
+                                await on_config(self._parse_config(message.payload))
+                    except asyncio.CancelledError:
+                        # Graceful stop: a clean disconnect does not trigger the last will.
+                        with contextlib.suppress(aiomqtt.MqttError):
+                            await client.publish(self.topic_availability, "offline", qos=1, retain=True)
+                        raise
             except aiomqtt.MqttError as err:
                 _LOGGER.warning("MQTT connection lost (%s); retrying in %ss", err, self._reconnect_delay)
             finally:

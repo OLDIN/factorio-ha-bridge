@@ -124,3 +124,16 @@ async def test_config_delivered_and_cleared(broker_port):
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_graceful_stop_publishes_offline(broker_port):
+    """docker stop -> SIGTERM -> task cancelled: a clean disconnect sends no last will."""
+    await _wait_broker(broker_port)
+    sid = uuid.uuid4().hex[:6]
+    task = await _started(MqttOutput(_settings(broker_port, sid)), _noop)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    async with aiomqtt.Client("127.0.0.1", broker_port) as client:
+        await client.subscribe(f"factorio/{sid}/availability")
+        msg = await asyncio.wait_for(anext(aiter(client.messages)), 5)
+        assert msg.payload == b"offline"

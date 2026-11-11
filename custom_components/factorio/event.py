@@ -33,5 +33,6 @@ class GameEventsEntity(FactorioEntity, EventEntity):
     @callback
     def _handle_game_event(self, name: str, data: dict[str, Any]) -> None:
         if name in EVENT_TYPES:
-            self._trigger_event(name, data)
+            # Game data must not override the event_type attribute HA sets.
+            self._trigger_event(name, {k: v for k, v in data.items() if k != "event_type"})
             self.async_write_ha_state()

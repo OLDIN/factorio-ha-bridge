@@ -145,3 +145,28 @@ async def test_entity_ids_independent_of_language(hass: HomeAssistant, mqtt_mock
 async def test_server_id_with_dash_gives_valid_entity_ids(hass: HomeAssistant, mqtt_mock):
     await setup_entry(hass, server_id="mac-dev")
     assert hass.states.get("sensor.factorio_mac_dev_game_state") is not None
+
+
+async def test_bus_event_cannot_override_server_id(hass: HomeAssistant, mqtt_mock):
+    events = async_capture_events(hass, "factorio_player_joined")
+    await setup_entry(hass)
+    await fire(hass, "factorio/main/event",
+               {"v": 1, "event": "player_joined", "tick": 9, "time": "t",
+                "data": {"player": "guest", "server_id": "spoofed"}})
+    assert events[0].data["server_id"] == "main"
+
+
+async def test_unknown_event_type_not_fired_on_bus(hass: HomeAssistant, mqtt_mock):
+    events = async_capture_events(hass, "factorio_reboot_everything")
+    await setup_entry(hass)
+    await fire(hass, "factorio/main/event",
+               {"v": 1, "event": "reboot_everything", "tick": 9, "time": "t", "data": {}})
+    assert events == []
+
+
+async def test_event_data_cannot_override_event_type(hass: HomeAssistant, mqtt_mock):
+    await setup_entry(hass)
+    await fire(hass, "factorio/main/event",
+               {"v": 1, "event": "player_joined", "tick": 9, "time": "t",
+                "data": {"player": "guest", "event_type": "player_left"}})
+    assert hass.states.get("event.factorio_main_game_events").attributes["event_type"] == "player_joined"

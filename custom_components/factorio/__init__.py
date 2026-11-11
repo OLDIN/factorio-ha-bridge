@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 
-from .const import CONF_SERVER_ID, DOMAIN
+from .const import CONF_SERVER_ID, DOMAIN, EVENT_TYPES
 from .core import FactorioCore, build_config
 from .providers import create_provider
 from .providers.base import Provider
@@ -38,7 +38,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: FactorioConfigEntry) -> 
 
     @callback
     def fire_bus_event(name: str, data: dict[str, Any]) -> None:
-        hass.bus.async_fire(f"{DOMAIN}_{name}", {"server_id": server_id, **data})
+        if name not in EVENT_TYPES:
+            return
+        # server_id last: data from the game must not override it.
+        hass.bus.async_fire(f"{DOMAIN}_{name}", {**data, "server_id": server_id})
 
     known_version: dict[str, str | None] = {"mod": None}
 
