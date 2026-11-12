@@ -334,4 +334,46 @@ do
   assert(d.by_planet.nauvis.groups[1].recipe == "full-mall", "with the flag the full group is the most stopped")
 end
 
+
+-- 2c: trim_groups drops from by_platform too, by the same smallest-stopped-share rule
+do
+  local function encode(v)
+    local function enc(x)
+      if type(x) ~= "table" then return tostring(x) end
+      if #x > 0 then
+        local items = {}
+        for i, v in ipairs(x) do items[i] = enc(v) end
+        return "[" .. table.concat(items, ",") .. "]"
+      end
+      local keys = {}
+      for k in pairs(x) do keys[#keys + 1] = k end
+      table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+      local out = {}
+      for _, k in ipairs(keys) do out[#out + 1] = tostring(k) .. "=" .. enc(x[k]) end
+      return "{" .. table.concat(out, ",") .. "}"
+    end
+    return enc(v)
+  end
+  local function grp(name, total, idle)
+    return { recipe = name, total = total, working = total - idle, no_input = idle, output_full = 0, no_power = 0, at = {} }
+  end
+  local function build()
+    return {
+      by_planet = { nauvis = { total = 100, working = 50, groups = { grp("a", 10, 9), grp("b", 10, 5) } } },
+      by_platform = { ["3"] = { name = "Hauler 2", total = 40, working = 30, groups = { grp("p", 10, 2), grp("q", 10, 8) } } },
+    }
+  end
+  local d = build()
+  local size = #encode(d)
+  assert(production.trim_groups(d, size - 1, encode) == 1)
+  assert(#d.by_platform["3"].groups == 1 and d.by_platform["3"].groups[1].recipe == "q", "p (0.2) goes first, from a platform")
+  assert(#d.by_planet.nauvis.groups == 2)
+  d = build()
+  assert(production.trim_groups(d, 1, encode) == 4)
+  assert(#d.by_platform["3"].groups == 0 and d.by_platform["3"].name == "Hauler 2" and d.by_platform["3"].total == 40)
+  -- no by_platform at all (older data shape) still works
+  d = build(); d.by_platform = nil
+  assert(production.trim_groups(d, 1, encode) == 2)
+end
+
 print("production_test ok")

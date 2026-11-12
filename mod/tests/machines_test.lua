@@ -189,5 +189,66 @@ do
   assert(machines.collect_machines())
 end
 
+
+-- 2c: machines on space platforms go to by_platform (with the platform's name), not by_planet --
+do
+  reset()
+  local hauler = { index = 3, name = "Hauler 2", valid = true }
+  local psurface = { name = "platform-3", valid = true, platform = hauler }
+  game.surfaces = { nauvis = surface, ["platform-3"] = psurface }
+  game.get_surface = function(name) return game.surfaces[name] end
+  game.forces = { player = { platforms = { [3] = hauler } } }
+  local function on(s)
+    return function()
+      local out = {}
+      for _, e in ipairs(world) do if e.surface == s then out[#out + 1] = e end end
+      return out
+    end
+  end
+  surface.find_entities_filtered, psurface.find_entities_filtered = on(surface), on(psurface)
+  for _ = 1, 4 do assembler("working") end
+  for _ = 1, 6 do assembler("no_ingredients", "thruster-fuel").surface = psurface end
+  for _ = 1, 4 do assembler("working", "thruster-fuel").surface = psurface end
+  steps(200)
+  local m = machines.collect_machines()
+  assert(m.by_planet.nauvis.total == 4, "planet machines only")
+  assert(m.by_planet["@3"] == nil, "no platform key in by_planet")
+  local p = m.by_platform["3"]
+  assert(p and p.name == "Hauler 2" and p.total == 10 and p.working == 4 and p.no_input == 6, "platform summary")
+  assert(#p.groups == 1 and p.groups[1].recipe == "thruster-fuel", "platform group")
+  for k in pairs(machines.collect_drills().by_planet) do assert(k:sub(1, 1) ~= "@", "no platform in drills") end
+  hauler.valid = false -- the platform is gone: its machines are left out
+  assert(machines.collect_machines().by_platform["3"] == nil)
+end
+
+
+-- 2c: after a mod update the registry is rebuilt, so machines already on platforms are found --
+do
+  reset()
+  local hauler = { index = 3, name = "Hauler 2", valid = true }
+  local psurface = { name = "platform-3", valid = true, platform = hauler }
+  game.surfaces = { nauvis = surface } -- the old version filled planet surfaces only
+  game.get_surface = function(name) return game.surfaces[name] end
+  game.forces = { player = { platforms = { [3] = hauler } } }
+  local function on(s)
+    return function()
+      local out = {}
+      for _, e in ipairs(world) do if e.surface == s then out[#out + 1] = e end end
+      return out
+    end
+  end
+  surface.find_entities_filtered, psurface.find_entities_filtered = on(surface), on(psurface)
+  for _ = 1, 4 do assembler("working") end
+  for _ = 1, 3 do assembler("no_ingredients", "thruster-fuel").surface = psurface end
+  steps(200)
+  assert(machines.collect_machines().by_platform["3"] == nil, "not in the old registry")
+  game.surfaces["platform-3"] = psurface
+  machines.rebuild()
+  assert(machines.collect_machines() == nil, "not ready until the new registry is scanned")
+  steps(200)
+  local p = machines.collect_machines().by_platform["3"]
+  assert(p and p.total == 3, "found after the rebuild")
+end
+
 transport.update_if_changed, production.set = real_update, real_set
 print("machines_test ok")

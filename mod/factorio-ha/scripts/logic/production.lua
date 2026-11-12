@@ -172,15 +172,18 @@ function production.trim_groups(data, max_bytes, encode, with_output_full)
   local size = #encode(data)
   if size <= max_bytes then return 0 end
   local list = {}
-  for planet, entry in pairs(data.by_planet) do
-    for _, g in ipairs(entry.groups) do
-      list[#list + 1] = { planet = planet, group = g,
-                          share = idle_count(g, with_output_full) / g.total }
+  for _, section in ipairs({ "by_planet", "by_platform" }) do -- 2c: platforms share the budget
+    for place, entry in pairs(data[section] or {}) do
+      for _, g in ipairs(entry.groups) do
+        list[#list + 1] = { section = section, planet = place, group = g,
+                            share = idle_count(g, with_output_full) / g.total }
+      end
     end
   end
   table.sort(list, function(a, b)
     if a.share ~= b.share then return a.share < b.share end
     if a.group.total ~= b.group.total then return a.group.total < b.group.total end
+    if a.section ~= b.section then return a.section < b.section end
     if a.planet ~= b.planet then return a.planet < b.planet end
     return a.group.recipe < b.group.recipe
   end)
@@ -194,7 +197,7 @@ function production.trim_groups(data, max_bytes, encode, with_output_full)
     while dropped < n do
       dropped = dropped + 1
       local item = list[dropped]
-      local groups = data.by_planet[item.planet].groups
+      local groups = data[item.section][item.planet].groups
       for i, g in ipairs(groups) do
         if g == item.group then table.remove(groups, i); break end
       end

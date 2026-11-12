@@ -61,6 +61,7 @@ end)
 
 script.on_configuration_changed(function()
   config.init()
+  machines.rebuild() -- refill the machine registry from every surface that counts now
   send_hello("configuration_changed")
 end)
 

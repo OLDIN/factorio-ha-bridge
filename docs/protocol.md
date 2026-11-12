@@ -273,6 +273,10 @@ turrets, `research`, `players`).
   minutes) after the last loss, then disappears.
 - Updated on `on_space_platform_changed_state`, when a damage episode starts, and every
   600 ticks while something changed (flying platforms move).
+- `machines.by_platform` (2c): machines on platform surfaces, keyed by the platform `index` as a
+  string, each `{name, total, working, no_input, output_full, no_power, groups}` with the same
+  group rules as `by_planet`. The one-datagram trim drops groups from both sections by the same
+  rule. `by_platform` may arrive as `[]` when there are none.
 
 ### New events
 
