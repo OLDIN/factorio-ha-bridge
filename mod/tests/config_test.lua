@@ -23,4 +23,8 @@ assert(not ok and not changed)
 ok = config.apply("junk")
 assert(not ok)
 
+ok, changed = config.apply({ v = 1, categories = { machines = true, drills = true } })
+assert(ok and changed and config.enabled("machines") and config.enabled("drills"))
+assert(not config.enabled("players"))
+
 print("config_test ok")

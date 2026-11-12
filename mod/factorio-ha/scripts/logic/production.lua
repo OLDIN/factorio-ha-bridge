@@ -144,4 +144,35 @@ function production.resources(state, location)
   return out
 end
 
+-- Trims `data` ({by_planet = {planet = {groups = {...}}}}, as sent in `machines`) so that
+-- encode(data) is at most max_bytes: drops groups one at a time, smallest stopped share first
+-- (across all planets; ties: fewer machines, then planet and recipe name). Totals stay.
+-- Returns the number of dropped groups.
+function production.trim_groups(data, max_bytes, encode)
+  if #encode(data) <= max_bytes then return 0 end
+  local list = {}
+  for planet, entry in pairs(data.by_planet) do
+    for _, g in ipairs(entry.groups) do
+      list[#list + 1] = { planet = planet, group = g,
+                          share = (g.no_input + g.output_full + g.no_power) / g.total }
+    end
+  end
+  table.sort(list, function(a, b)
+    if a.share ~= b.share then return a.share < b.share end
+    if a.group.total ~= b.group.total then return a.group.total < b.group.total end
+    if a.planet ~= b.planet then return a.planet < b.planet end
+    return a.group.recipe < b.group.recipe
+  end)
+  local dropped = 0
+  for _, item in ipairs(list) do
+    local groups = data.by_planet[item.planet].groups
+    for i, g in ipairs(groups) do
+      if g == item.group then table.remove(groups, i); break end
+    end
+    dropped = dropped + 1
+    if #encode(data) <= max_bytes then break end
+  end
+  return dropped
+end
+
 return production

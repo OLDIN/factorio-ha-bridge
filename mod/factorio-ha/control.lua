@@ -8,6 +8,7 @@ local planets = require("scripts.planets")
 local research = require("scripts.research")
 local evolution = require("scripts.evolution")
 local defense = require("scripts.defense")
+local machines = require("scripts.machines")
 local players = require("scripts.players")
 
 local HEARTBEAT_TICKS = 300 -- 5 s
@@ -26,6 +27,8 @@ local function collect()
   if config.enabled("research") then data.research = research.snapshot() end
   if config.enabled("evolution") then data.evolution = evolution.snapshot() end
   if config.enabled("defense") then data.defense = defense.snapshot() end
+  if config.enabled("machines") then data.machines = machines.collect_machines() end
+  if config.enabled("drills") then data.drills = machines.collect_drills() end
   return data
 end
 
@@ -75,6 +78,9 @@ end)
 -- Turret scanner: one portion per step (a lap takes CHECK_TICKS).
 script.on_nth_tick(defense.SCAN_TICKS, defense.scan_step)
 
+-- Machine/drill scanner: one portion per step (a lap takes 600 ticks).
+script.on_nth_tick(machines.SCAN_TICKS, machines.scan_step)
+
 script.on_nth_tick(SNAPSHOT_TICKS, function()
   send_hello("periodic")
   if config.any_enabled() then send_snapshot() end
@@ -90,16 +96,37 @@ end)
 script.on_event(defines.events.on_surface_created, planets.refresh)
 script.on_event(defines.events.on_surface_deleted, planets.refresh)
 
-local turret_filters = {}
+-- One handler per built event (a second script.on_event would REPLACE the first): merged
+-- filters of turrets and machines/drills, dispatched by entity type.
+local built_filters = {}
 for _, t in ipairs(defense.TURRET_TYPES) do
-  turret_filters[#turret_filters + 1] = { filter = "type", type = t }
+  built_filters[#built_filters + 1] = { filter = "type", type = t }
 end
-script.on_event(defines.events.on_built_entity, defense.on_built, turret_filters)
-script.on_event(defines.events.on_robot_built_entity, defense.on_built, turret_filters)
-script.on_event(defines.events.script_raised_built, defense.on_built, turret_filters)
-script.on_event(defines.events.script_raised_revive, defense.on_built, turret_filters)
-script.on_event(defines.events.on_entity_cloned, defense.on_built, turret_filters) -- uses event.destination
-script.on_event(defines.events.on_object_destroyed, defense.on_object_destroyed)
+local MACHINE_TYPES = {}
+for _, t in ipairs(machines.TYPES) do
+  MACHINE_TYPES[t] = true
+  built_filters[#built_filters + 1] = { filter = "type", type = t }
+end
+
+local function on_built(e)
+  local entity = e.entity or e.created_entity or e.destination -- on_entity_cloned: destination
+  if not (entity and entity.valid) then return end
+  if MACHINE_TYPES[entity.type] then
+    machines.on_built(e)
+  else
+    defense.on_built(e)
+  end
+end
+
+script.on_event(defines.events.on_built_entity, on_built, built_filters)
+script.on_event(defines.events.on_robot_built_entity, on_built, built_filters)
+script.on_event(defines.events.script_raised_built, on_built, built_filters)
+script.on_event(defines.events.script_raised_revive, on_built, built_filters)
+script.on_event(defines.events.on_entity_cloned, on_built, built_filters)
+script.on_event(defines.events.on_object_destroyed, function(e)
+  defense.on_object_destroyed(e)
+  machines.on_object_destroyed(e)
+end)
 script.on_event(defines.events.on_entity_damaged, defense.on_entity_damaged,
   { { filter = "type", type = "wall" }, { filter = "type", type = "gate" } })
 

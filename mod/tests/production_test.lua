@@ -177,4 +177,55 @@ do
   assert(biggest < 8000, "per-planet payload " .. biggest .. " bytes")
 end
 
+-- trim_groups: drop the groups with the smallest stopped share until the encoding fits
+do
+  local function encode(v)  -- tiny deterministic stand-in for helpers.table_to_json
+    local function enc(x)
+      if type(x) ~= "table" then return tostring(x) end
+      local keys = {}
+      for k in pairs(x) do keys[#keys + 1] = k end
+      table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+      local out = {}
+      for _, k in ipairs(keys) do out[#out + 1] = tostring(k) .. "=" .. enc(x[k]) end
+      return "{" .. table.concat(out, ",") .. "}"
+    end
+    return enc(v)
+  end
+  local function grp(name, total, idle)
+    return { recipe = name, total = total, working = total - idle, no_input = idle,
+             output_full = 0, no_power = 0, at = {} }
+  end
+  local function build()
+    return { by_planet = {
+      nauvis = { total = 100, working = 50, groups = { grp("a", 10, 9), grp("b", 10, 2), grp("c", 10, 5) } },
+      gleba = { total = 20, working = 10, groups = { grp("d", 10, 3), grp("e", 10, 8) } },
+    } }
+  end
+  local full = build()
+  local size = #encode(full)
+  assert(production.trim_groups(full, size, encode) == 0, "fits: nothing dropped")
+  assert(#full.by_planet.nauvis.groups == 3)
+
+  local d = build()
+  local dropped = production.trim_groups(d, size - 1, encode)
+  assert(dropped == 1, dropped)
+  assert(#d.by_planet.nauvis.groups == 2 and d.by_planet.nauvis.groups[1].recipe == "a"
+    and d.by_planet.nauvis.groups[2].recipe == "c", "b (share 0.2) is the smallest")
+  assert(#d.by_planet.gleba.groups == 2)
+
+  d = build()
+  assert(production.trim_groups(d, 1, encode) == 5, "impossible limit: all groups go, then stop")
+  assert(#d.by_planet.nauvis.groups == 0 and #d.by_planet.gleba.groups == 0)
+  assert(d.by_planet.nauvis.total == 100, "totals stay")
+
+  d = build()  -- two drops: b (0.2) then d (0.3)
+  local limit = #encode(d) - 1
+  local e = build()
+  production.trim_groups(e, limit, encode)
+  local after_one = #encode(e)
+  production.trim_groups(d, after_one - 1, encode)
+  assert(#d.by_planet.nauvis.groups == 2 and #d.by_planet.gleba.groups == 1
+    and d.by_planet.gleba.groups[1].recipe == "e")
+end
+
 print("production_test ok")

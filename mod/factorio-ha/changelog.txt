@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: unreleased
+  Features:
+    - feat(mod): machines and drills categories (production lines, depleted drills)
+---------------------------------------------------------------------------------------------------
 Version: 0.2.0
 Date: 2026-11-12
   Features:
