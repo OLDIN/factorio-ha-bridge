@@ -92,7 +92,7 @@ do
       production.set(s, id, "nauvis", "r" .. i, j <= i / 3 + 1 and "output_full" or "working", { id, 0 })
     end
   end
-  local g = production.groups(s, "nauvis", 0.1, 20, 3)
+  local g = production.groups(s, "nauvis", 0.1, 20, 3, true)
   assert(#g == 20, #g)
   local min_share = 1
   for _, x in ipairs(g) do min_share = math.min(min_share, x.output_full / x.total) end
@@ -290,6 +290,90 @@ do
     end)
     assert(whole <= 4, "whole-category encodes: " .. whole)
   end
+end
+
+-- "output full" is not "stopped" unless the line rule says so (saturated malls and buffers)
+do
+  local s = production.new()
+  add(s, 1, 3, "nauvis", "barrel", "output_full")          -- a mall: everything full
+  add(s, 4, 9, "nauvis", "iron-plate", "working")
+  add(s, 10, 11, "nauvis", "iron-plate", "output_full")
+  add(s, 12, 13, "nauvis", "iron-plate", "no_input")
+  local off = production.groups(s, "nauvis", 0.1, 20, 3, false)
+  assert(#off == 1 and off[1].recipe == "iron-plate", "only the starving group without the flag")
+  assert(#off[1].at == 2 and off[1].at[1][1] == 12 and off[1].at[2][1] == 13, "positions of starving machines only")
+  assert(off[1].output_full == 2, "the counters stay facts")
+  local on = production.groups(s, "nauvis", 0.1, 20, 3, true)
+  assert(#on == 2 and on[1].recipe == "barrel", "with the flag the full mall is the worst")
+  assert(#on[2].at == 3, "with the flag full machines are positions too")
+  local b = production.buckets(s, "nauvis")
+  assert(b.no_input == 2 and b.output_full == 5 and b.no_power == 0, "planet counters cover all groups")
+  local none = production.buckets(s, "vulcanus")
+  assert(none.no_input == 0 and none.output_full == 0 and none.no_power == 0)
+end
+
+-- trimming drops the least stopped first by the same rule
+do
+  local function grp(recipe, total, no_input, output_full)
+    return { recipe = recipe, total = total, working = total - no_input - output_full,
+             no_input = no_input, output_full = output_full, no_power = 0, at = {} }
+  end
+  local function data()
+    return { by_planet = { nauvis = { total = 30, working = 10, groups = {
+      grp("full-mall", 10, 0, 10), grp("starving", 10, 5, 0), grp("half", 10, 2, 0) } } } }
+  end
+  -- 100 bytes per group in the whole category, 99 per group alone (+1 for the comma)
+  local function size(d)
+    return string.rep("x", d.by_planet and #d.by_planet.nauvis.groups * 100 or 99)
+  end
+  local d = data()
+  production.trim_groups(d, 100, size, false)
+  assert(#d.by_planet.nauvis.groups == 1 and d.by_planet.nauvis.groups[1].recipe == "starving", "without the flag a full group is dropped first")
+  d = data()
+  production.trim_groups(d, 100, size, true)
+  assert(d.by_planet.nauvis.groups[1].recipe == "full-mall", "with the flag the full group is the most stopped")
+end
+
+
+-- 2c: trim_groups drops from by_platform too, by the same smallest-stopped-share rule
+do
+  local function encode(v)
+    local function enc(x)
+      if type(x) ~= "table" then return tostring(x) end
+      if #x > 0 then
+        local items = {}
+        for i, v in ipairs(x) do items[i] = enc(v) end
+        return "[" .. table.concat(items, ",") .. "]"
+      end
+      local keys = {}
+      for k in pairs(x) do keys[#keys + 1] = k end
+      table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+      local out = {}
+      for _, k in ipairs(keys) do out[#out + 1] = tostring(k) .. "=" .. enc(x[k]) end
+      return "{" .. table.concat(out, ",") .. "}"
+    end
+    return enc(v)
+  end
+  local function grp(name, total, idle)
+    return { recipe = name, total = total, working = total - idle, no_input = idle, output_full = 0, no_power = 0, at = {} }
+  end
+  local function build()
+    return {
+      by_planet = { nauvis = { total = 100, working = 50, groups = { grp("a", 10, 9), grp("b", 10, 5) } } },
+      by_platform = { ["3"] = { name = "Hauler 2", total = 40, working = 30, groups = { grp("p", 10, 2), grp("q", 10, 8) } } },
+    }
+  end
+  local d = build()
+  local size = #encode(d)
+  assert(production.trim_groups(d, size - 1, encode) == 1)
+  assert(#d.by_platform["3"].groups == 1 and d.by_platform["3"].groups[1].recipe == "q", "p (0.2) goes first, from a platform")
+  assert(#d.by_planet.nauvis.groups == 2)
+  d = build()
+  assert(production.trim_groups(d, 1, encode) == 4)
+  assert(#d.by_platform["3"].groups == 0 and d.by_platform["3"].name == "Hauler 2" and d.by_platform["3"].total == 40)
+  -- no by_platform at all (older data shape) still works
+  d = build(); d.by_platform = nil
+  assert(production.trim_groups(d, 1, encode) == 2)
 end
 
 print("production_test ok")

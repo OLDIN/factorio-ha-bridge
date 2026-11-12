@@ -61,9 +61,20 @@ end
 
 local function round(v) return math.floor(v + 0.5) end
 
-local function planet_name(surface)
-  local planet = surface and surface.valid and surface.planet
-  return planet and planet.name or nil
+-- Where an entity counts: the planet's name, or "@<index>" on a space platform (prototype names
+-- never contain "@", so the two cannot clash). nil elsewhere (factory floors, ...).
+local PLATFORM = "@"
+local function location_of(surface)
+  if not (surface and surface.valid) then return nil end
+  local planet = surface.planet
+  if planet then return planet.name end
+  local platform = surface.platform
+  if platform then return PLATFORM .. platform.index end
+  return nil
+end
+
+local function is_platform(location)
+  return string.sub(location, 1, 1) == PLATFORM
 end
 
 local function unregister(m, id)
@@ -76,11 +87,12 @@ local function register(m, entity)
   if not (entity and entity.valid and entity.unit_number) then return end
   if not TYPE_SET[entity.type] then return end
   if entity.force.name ~= "player" then return end
-  local planet = planet_name(entity.surface)
-  if not planet then return end
+  local location = location_of(entity.surface)
+  if not location then return end
   local id = entity.unit_number
   if scanner.get(m.reg, id) then return end
-  local item = { id = id, entity = entity, planet = planet, drill = entity.type == "mining-drill" }
+  -- `planet` holds the location key (a planet or "@<platform index>"); the name stays for old saves.
+  local item = { id = id, entity = entity, planet = location, drill = entity.type == "mining-drill" }
   if not item.drill then -- machines cannot move; drills do not report positions
     local p = entity.position
     item.at = { round(p.x), round(p.y) }
@@ -142,7 +154,7 @@ end
 local function start_fill(m)
   local names = {}
   for _, surface in pairs(game.surfaces) do
-    if surface.planet then names[#names + 1] = surface.name end
+    if location_of(surface) then names[#names + 1] = surface.name end
   end
   table.sort(names)
   m.fill = fill.new(names)
@@ -161,11 +173,22 @@ local function fill_step(m)
   if fill.is_done(m.fill) then m.fill, m.filled = nil, true end
 end
 
-local function sorted_planets(prod)
+-- Planet locations, or platform locations ("@<index>"), sorted.
+local function sorted_locations(prod, platforms)
   local names = {}
-  for planet in pairs(prod.locations) do names[#names + 1] = planet end
+  for location in pairs(prod.locations) do
+    if is_platform(location) == platforms then names[#names + 1] = location end
+  end
   table.sort(names)
   return names
+end
+
+local function summary_of(m, location, with_output_full)
+  local sm = production.summary(m.machines, location)
+  local b = production.buckets(m.machines, location)
+  return { total = sm.total, working = sm.working,
+           no_input = b.no_input, output_full = b.output_full, no_power = b.no_power,
+           groups = production.groups(m.machines, location, MIN_SHARE, MAX_GROUPS, MAX_POSITIONS, with_output_full) }
 end
 
 -- nil until the registry is complete and has been scanned once: disabled, the initial fill
@@ -173,14 +196,23 @@ end
 function machines.collect_machines()
   local m = storage.machines
   if not (m and m.ready) then return nil end
-  local by_planet = {}
-  for _, planet in ipairs(sorted_planets(m.machines)) do
-    local sm = production.summary(m.machines, planet)
-    by_planet[planet] = { total = sm.total, working = sm.working,
-                          groups = production.groups(m.machines, planet, MIN_SHARE, MAX_GROUPS, MAX_POSITIONS) }
+  local with_output_full = config.line_output_full()
+  local by_planet, by_platform = {}, {}
+  for _, planet in ipairs(sorted_locations(m.machines, false)) do
+    by_planet[planet] = summary_of(m, planet, with_output_full)
   end
-  local data = { by_planet = by_planet }
-  production.trim_groups(data, MAX_BYTES, function(d) return helpers.table_to_json({ machines = d }) end)
+  -- Machines on space platforms, keyed by the platform index as a string, with its current name.
+  for _, location in ipairs(sorted_locations(m.machines, true)) do
+    local index = tonumber(string.sub(location, 2))
+    local platform = game.forces.player.platforms[index]
+    if platform and platform.valid then
+      local entry = summary_of(m, location, with_output_full)
+      entry.name = platform.name
+      by_platform[tostring(index)] = entry
+    end
+  end
+  local data = { by_planet = by_planet, by_platform = by_platform }
+  production.trim_groups(data, MAX_BYTES, function(d) return helpers.table_to_json({ machines = d }) end, with_output_full)
   return data
 end
 
@@ -188,7 +220,7 @@ function machines.collect_drills()
   local m = storage.machines
   if not (m and m.ready) then return nil end
   local by_planet = {}
-  for _, planet in ipairs(sorted_planets(m.drills)) do
+  for _, planet in ipairs(sorted_locations(m.drills, false)) do
     local sm = production.summary(m.drills, planet)
     by_planet[planet] = { total = sm.total, working = sm.working,
                           by_resource = production.resources(m.drills, planet) }
@@ -240,6 +272,12 @@ function machines.scan_step()
     m.steps = 0
     publish()
   end
+end
+
+-- After a mod or game update: drop the registry, so the next steps refill it from every surface
+-- that counts now (2c added platform surfaces, which older versions never registered).
+function machines.rebuild()
+  storage.machines = nil
 end
 
 function machines.on_built(e)

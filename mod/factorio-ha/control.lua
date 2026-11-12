@@ -10,6 +10,7 @@ local evolution = require("scripts.evolution")
 local defense = require("scripts.defense")
 local machines = require("scripts.machines")
 local players = require("scripts.players")
+local platforms = require("scripts.platforms")
 
 local HEARTBEAT_TICKS = 300 -- 5 s
 local SNAPSHOT_TICKS = 3600 -- 60 s
@@ -29,6 +30,7 @@ local function collect()
   if config.enabled("defense") then data.defense = defense.snapshot() end
   if config.enabled("machines") then data.machines = machines.collect_machines() end
   if config.enabled("drills") then data.drills = machines.collect_drills() end
+  if config.enabled("platforms") then data.platforms = platforms.collect() end
   return data
 end
 
@@ -59,13 +61,15 @@ end)
 
 script.on_configuration_changed(function()
   config.init()
+  machines.rebuild() -- refill the machine registry from every surface that counts now
   send_hello("configuration_changed")
 end)
 
--- Every 5 s: heartbeat, and attacks (running ones are pushed, quiet ones ended).
+-- Every 5 s: heartbeat, attacks and platform damage (running ones are pushed, quiet ones ended).
 script.on_nth_tick(HEARTBEAT_TICKS, function()
   send_heartbeat()
   defense.tick_attacks()
+  platforms.tick()
 end)
 
 script.on_nth_tick(CHECK_TICKS, function()
@@ -73,6 +77,7 @@ script.on_nth_tick(CHECK_TICKS, function()
   evolution.refresh()
   defense.refresh()
   players.refresh() -- AFK minutes
+  platforms.refresh() -- flying platforms move
 end)
 
 -- Turret scanner: one portion per step (a lap takes CHECK_TICKS).
@@ -130,7 +135,12 @@ end)
 script.on_event(defines.events.on_entity_damaged, defense.on_entity_damaged,
   { { filter = "type", type = "wall" }, { filter = "type", type = "gate" } })
 
-script.on_event(defines.events.on_entity_died, defense.on_entity_died)
+-- One handler for deaths: attacks on planets, damage on platforms.
+script.on_event(defines.events.on_entity_died, function(e)
+  defense.on_entity_died(e)
+  platforms.on_entity_died(e)
+end)
+script.on_event(defines.events.on_space_platform_changed_state, platforms.on_state_changed)
 script.on_event(defines.events.on_player_died, players.on_died)
 
 script.on_event(defines.events.on_player_joined_game, function(e)

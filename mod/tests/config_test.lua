@@ -27,4 +27,22 @@ ok, changed = config.apply({ v = 1, categories = { machines = true, drills = tru
 assert(ok and changed and config.enabled("machines") and config.enabled("drills"))
 assert(not config.enabled("players"))
 
+-- line rule from HA: "output full" counts as stopped only when asked for
+assert(config.line_output_full() == false)
+ok, changed = config.apply({ v = 1, categories = { machines = true }, lines = { output_full = true } })
+assert(ok and changed and config.line_output_full(), "flag on is a change")
+ok, changed = config.apply({ v = 1, categories = { machines = true }, lines = { output_full = true } })
+assert(ok and not changed)
+ok, changed = config.apply({ v = 1, categories = { machines = true } })
+assert(ok and changed and not config.line_output_full(), "a missing flag means off")
+ok, changed = config.apply({ v = 1, categories = { machines = true }, lines = { output_full = "yes" } })
+assert(ok and not changed and not config.line_output_full(), "only true turns it on")
+
 print("config_test ok")
+
+-- 2c: platforms is a category
+do
+  local ok2, changed2 = config.apply({ v = 1, categories = { platforms = true } })
+  assert(ok2 and changed2 and config.enabled("platforms"))
+  print("config platforms ok")
+end
