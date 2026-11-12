@@ -188,6 +188,20 @@ so consumers never see partial totals. Only enabled categories are sent.
   600 ticks; the registry is filled at most 200 entities per step on first enable and is
   dropped when both categories are switched off.
 
+### Relay → MQTT (game clock)
+
+| topic | retained | payload |
+|---|---|---|
+| `factorio/<id>/tick` | no | `{"v":1,"tick":123}` — on every mod heartbeat (every 300 ticks while the game runs) |
+
+The game clock for rules measured in game time (production lines in HA). `data/*` and `state`
+are published only on change, so a stalled, unchanging line would otherwise yield no new tick.
+A paused game sends no heartbeat, so the clock stands still too. Nothing is published to it from
+restored state, `hello`, `snapshot`, `update` or `event`.
+
+Compatibility: the production-line rule in the integration needs relay >= 0.3.0; with an older relay
+the hold time is counted only by the ticks of category changes.
+
 ### Lua JSON quirks
 
 - **Absent means null.** Lua JSON cannot emit `null`, so a field that would be `null` is

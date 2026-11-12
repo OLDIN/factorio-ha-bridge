@@ -37,6 +37,7 @@ class MqttOutput:
         self.topic_hello = f"{base}/hello"
         self.topic_state = f"{base}/state"
         self.topic_event = f"{base}/event"
+        self.topic_tick = f"{base}/tick"
         self.topic_config = f"{base}/config"
         self.topic_data_prefix = f"{base}/data/"
 
@@ -165,6 +166,9 @@ class MqttOutput:
         await self._publish(
             f"{self.topic_data_prefix}{category}", "" if payload is None else _compact(payload), retain=True
         )
+
+    async def publish_tick(self, tick: dict[str, Any]) -> None:
+        await self._publish(self.topic_tick, _compact(tick), retain=False)
 
     async def stop(self) -> None:
         await self._publish(self.topic_availability, "offline", retain=True)

@@ -95,6 +95,7 @@ class Relay:
         self._store.apply(msg)
         if msg.type == "heartbeat":
             self._last_heartbeat = self._monotonic()
+            await self._output.publish_tick({"v": PROTOCOL_VERSION, "tick": msg.tick})
         if msg.type == "hello":
             _LOGGER.info("Mod says hello (version %s)", self._store.mod_version)
             await self._output.publish_hello(self._hello())

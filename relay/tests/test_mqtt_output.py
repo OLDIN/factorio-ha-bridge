@@ -293,3 +293,24 @@ async def test_seed_read_is_bounded_and_ignores_non_retained(broker_port):
         await flooder
     assert elapsed < 1.4
     assert set(found) == {"state", "hello"}
+
+
+async def test_tick_published_compact_not_retained(broker_port):
+    await _wait_broker(broker_port)
+    sid = uuid.uuid4().hex[:6]
+    out = MqttOutput(_settings(broker_port, sid))
+    task = await _started(out, _noop)
+    try:
+        async with aiomqtt.Client("127.0.0.1", broker_port) as client:
+            await client.subscribe(f"factorio/{sid}/tick", qos=1)
+            await out.publish_tick({"v": 1, "tick": 600})
+            msg = await asyncio.wait_for(anext(aiter(client.messages)), 5)
+            assert msg.payload == b'{"v":1,"tick":600}'
+            assert not msg.retain
+        async with aiomqtt.Client("127.0.0.1", broker_port) as late:  # nothing retained for a late subscriber
+            await late.subscribe(f"factorio/{sid}/tick", qos=1)
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(anext(aiter(late.messages)), 0.5)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

@@ -14,7 +14,7 @@ OFF_CMD = '/factorio-ha-config {"v":1,"categories":{}}'
 
 class FakeOutput:
     def __init__(self):
-        self.hello, self.state, self.event, self.data = [], [], [], []
+        self.hello, self.state, self.event, self.data, self.tick = [], [], [], [], []
 
     async def publish_hello(self, hello):
         self.hello.append(hello)
@@ -27,6 +27,9 @@ class FakeOutput:
 
     async def publish_data(self, category, payload):
         self.data.append((category, payload))
+
+    async def publish_tick(self, tick):
+        self.tick.append(tick)
 
 
 class FakeRcon:
@@ -320,3 +323,21 @@ async def test_seed_data_does_not_override_fresh(env):
     published = dict(output.data)
     assert published["research"]["data"] == {"queue": ["new"]}
     assert published["planets"]["data"] == {"bodies": []}
+
+
+async def test_heartbeat_publishes_game_clock(env):
+    relay, output, _, _ = env
+    await relay.process_datagram(dg({"type": "heartbeat", "tick": 600, "players_online": 1}))
+    assert output.tick == [{"v": 1, "tick": 600}]
+    await relay.process_datagram(dg({"type": "heartbeat", "tick": 900, "players_online": 1}))
+    assert output.tick == [{"v": 1, "tick": 600}, {"v": 1, "tick": 900}]
+
+
+async def test_other_messages_do_not_publish_game_clock(env):
+    relay, output, _, _ = env
+    await relay.process_datagram(dg({"type": "hello", "tick": 1, "mod_version": "0.1.0"}))
+    await relay.process_datagram(dg({"type": "snapshot", "tick": 2, "data": {"players": {"online": ["a"]}}}))
+    await relay.process_datagram(dg({"type": "update", "tick": 3, "data": {"players": {"online": ["b"]}}}))
+    await relay.process_datagram(
+        dg({"type": "event", "tick": 4, "event": "player_joined", "data": {"player": "guest"}}))
+    assert output.tick == []
