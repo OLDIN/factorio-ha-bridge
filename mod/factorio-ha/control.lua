@@ -81,6 +81,8 @@ script.on_nth_tick(SNAPSHOT_TICKS, function()
 end)
 
 script.on_event(defines.events.on_research_finished, function(e)
+  -- Only the player force matters (enemy/other forces research too).
+  if e.research.force.name ~= "player" then return end
   research.on_finished(e)
   planets.refresh() -- a finished discovery tech unlocks bodies
 end)
@@ -95,6 +97,8 @@ end
 script.on_event(defines.events.on_built_entity, defense.on_built, turret_filters)
 script.on_event(defines.events.on_robot_built_entity, defense.on_built, turret_filters)
 script.on_event(defines.events.script_raised_built, defense.on_built, turret_filters)
+script.on_event(defines.events.script_raised_revive, defense.on_built, turret_filters)
+script.on_event(defines.events.on_entity_cloned, defense.on_built, turret_filters) -- uses event.destination
 script.on_event(defines.events.on_object_destroyed, defense.on_object_destroyed)
 script.on_event(defines.events.on_entity_damaged, defense.on_entity_damaged,
   { { filter = "type", type = "wall" }, { filter = "type", type = "gate" } })
@@ -124,7 +128,7 @@ commands.add_command("factorio-ha-config", "Internal: configuration from the fac
   end
   rcon.print("ok")
   -- A snapshot only when the config changed or it is the first one since the game loaded
-  -- (the relay may have restarted and needs the full state).
+  -- (a new game session: the relay has no state for it yet).
   if changed or not config_seen_this_session then
     config_seen_this_session = true
     send_snapshot()

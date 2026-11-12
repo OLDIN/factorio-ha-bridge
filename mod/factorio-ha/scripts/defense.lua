@@ -36,17 +36,6 @@ local NOT_LOSSES = { character = true, ["combat-robot"] = true, ["construction-r
 --   hysteresis = {},
 -- }
 -- storage.attacks = logic/attacks state (running attacks), dropped when `defense` is turned off.
--- Old saves kept walls as {planet = {n, set = {unit_number = entity}}}: convert.
-local function migrate(d)
-  if walls.is_registry(d.walls) then return end
-  local old, new = d.walls or {}, walls.new()
-  for planet, w in pairs(old) do
-    for id, entity in pairs(w.set or {}) do
-      if entity.valid then walls.add(new, id, entity, planet) end
-    end
-  end
-  d.walls = new
-end
 
 local function state()
   local d = storage.defense
@@ -54,7 +43,6 @@ local function state()
     d = { turrets = scanner.new(), counts = {}, no_ammo_ids = {}, walls = walls.new(), hysteresis = {}, filled = false }
     storage.defense = d
   end
-  migrate(d)
   return d
 end
 
@@ -199,7 +187,7 @@ end
 
 function defense.on_built(e)
   if not config.enabled("defense") then return end
-  register(state(), e.entity or e.created_entity)
+  register(state(), e.entity or e.created_entity or e.destination)
 end
 
 function defense.on_object_destroyed(e)
@@ -266,7 +254,6 @@ function defense.collect()
   local d = storage.defense
   local astate = storage.attacks
   if not d and not astate then return { by_planet = out } end
-  if d then migrate(d) end
   d = d or { counts = {}, no_ammo_ids = {}, walls = walls.new(), turrets = scanner.new() }
   for planet, c in pairs(d.counts) do
     if c.total > 0 then

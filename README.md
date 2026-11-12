@@ -31,6 +31,11 @@ delivers a config.
 | `evolution` | enemy evolution per planet |
 | `defense` | per planet: turrets without ammo or power, damaged walls, running attack; events `attack_started`, `attack_ended`, `turrets_no_ammo`, `turrets_ok` |
 
+Mod 0.2 needs relay >= 0.2 (an older relay replaces the data on every part of a split
+snapshot, so players flicker). The research queue includes the current research as its first
+entry, and the planet state `built` counts any player-force entity, including characters
+and vehicles.
+
 Details and the wire format: [docs/protocol.md](docs/protocol.md).
 
 ## Deploy (next to a factoriotools/factorio container)

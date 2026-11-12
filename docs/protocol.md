@@ -84,6 +84,10 @@ dropping the connection, because a paused game may not answer them.
 
 ## 2a additions (planets, research, evolution, defense)
 
+**Compatibility:** mod 0.2 needs relay >= 0.2. An old relay replaces `data` on every snapshot
+part, so with split snapshots the players (and other categories) would flicker. The reverse
+(relay 0.2 with mod 0.1.x) works.
+
 ### Mod → relay
 
 ```json
@@ -118,14 +122,15 @@ dropping the connection, because a paused game may not answer them.
 
 - `planets`: `kind` is the prototype type (`planet`, `space-location`, ...). `state`:
   `locked` | `unlocked` | `built` (`built` = an unlocked planet whose surface has player
-  buildings). `parent`: the name of the body whose position equals this body's `origin`
+  buildings; any `player`-force entity counts, including characters and vehicles, which is accepted). `parent`: the name of the body whose position equals this body's `origin`
   (tolerance `0.01`); absent otherwise. `unlocked_by`: the first technology (by name) with
   an `unlock-space-location` effect for the body; absent when there is none. Bodies with
   `hidden = true` are not sent.
 - `research`: `current` is absent when nothing is being researched. `progress` is `0..1` rounded to 3 decimals; sent at most every 600 ticks and
   only when it moved by `>= 0.01` (or on a name/level/queue change). `unlocks` lists the
   non-hidden space locations the current technology unlocks. `research_finished` is sent
-  immediately.
+  immediately. `queue` lists up to 5 names and **includes the current research as its first
+  entry** (`LuaForce.research_queue` semantics). Only the `player` force's research is reported.
 - `evolution.by_planet`: enemy evolution per planet surface, 4 decimals, only planets with
   a value `> 0`; checked every 600 ticks, sent when any planet moved by `>= 0.005`.
 - `defense.by_planet.<planet>`: planets that have turrets or damaged walls always carry both
@@ -136,7 +141,7 @@ dropping the connection, because a paused game may not answer them.
   first enable. `walls_damaged` covers `wall` and `gate`: a wall is added when it takes
   damage and removed once repaired or destroyed. Repairs are detected by the same 10-tick
   scanner step, in portions of about 1/60 of the damaged walls (at least 50), so a pass takes
-  about 600 ticks.
+  about 600 ticks and the tail of a large repair about 1500 ticks.
 - `players.afk_minutes`: only players AFK for at least one whole minute.
 - `attack` is absent when there is no attack. It is the attack with the most recent loss
   on that planet. Position lists (`no_ammo_at`, `at`) hold at most 5 entries.

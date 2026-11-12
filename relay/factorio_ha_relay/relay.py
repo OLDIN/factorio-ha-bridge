@@ -205,6 +205,6 @@ class Relay:
         try:
             answer = await self._rcon.exec(command)
         except RconError as err:
-            _LOGGER.warning("Config not delivered yet (%s); will retry on next hello/reconnect", err)
+            _LOGGER.warning("Config not delivered yet (%s); will retry on the next RCON reconnect, mod (re)start or config change", err)
             return
         _LOGGER.info("Config delivered to the game: %s", answer)
