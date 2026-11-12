@@ -210,3 +210,86 @@ async def test_seed_delivered_on_first_connect(broker_port):
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_data_topic_retained_and_cleared(broker_port):
+    await _wait_broker(broker_port)
+    sid = uuid.uuid4().hex[:6]
+    out = MqttOutput(_settings(broker_port, sid))
+    task = await _started(out, _noop)
+    payload = {"v": 1, "tick": 5, "data": {"queue": ["a"]}}
+    try:
+        await out.publish_data("research", payload)
+        async with aiomqtt.Client("127.0.0.1", broker_port) as client:
+            await client.subscribe(f"factorio/{sid}/data/research")
+            msg = await asyncio.wait_for(anext(aiter(client.messages)), 5)
+            assert msg.retain and json.loads(msg.payload) == payload
+        await out.publish_data("research", None)
+        async with aiomqtt.Client("127.0.0.1", broker_port) as client:
+            await client.subscribe(f"factorio/{sid}/data/research")
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(anext(aiter(client.messages)), 1)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_seed_reads_data_topics(broker_port):
+    await _wait_broker(broker_port)
+    sid = uuid.uuid4().hex[:6]
+    first = MqttOutput(_settings(broker_port, sid))
+    task = await _started(first, _noop)
+    await first.publish_data("research", {"v": 1, "tick": 5, "data": {"queue": ["a"]}})
+    await first.publish_data("planets", {"v": 1, "tick": 5, "data": {"bodies": []}})
+    await first.publish_data("gone", {"v": 1, "tick": 5, "data": {"x": 1}})
+    await first.publish_data("gone", None)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    seeds: list = []
+    connected = asyncio.Event()
+
+    async def on_connected():
+        connected.set()
+
+    second = MqttOutput(_settings(broker_port, sid))
+    task = asyncio.create_task(second.start(_noop, on_connected, seeds.append))
+    try:
+        await asyncio.wait_for(connected.wait(), 5)
+        assert seeds == [{"data": {"research": {"queue": ["a"]}, "planets": {"bodies": []}}}]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_seed_read_is_bounded_and_ignores_non_retained(broker_port):
+    await _wait_broker(broker_port)
+    sid = uuid.uuid4().hex[:6]
+    first = MqttOutput(_settings(broker_port, sid))
+    task = await _started(first, _noop)
+    await first.publish_state({"v": 1, "game_state": "running"})
+    await first.publish_hello({"v": 1, "server_id": sid})
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    stop = asyncio.Event()
+
+    async def flood():
+        async with aiomqtt.Client("127.0.0.1", broker_port) as pub:
+            while not stop.is_set():
+                await pub.publish(f"factorio/{sid}/data/x", '{"v":1,"tick":1,"data":{"k":1}}', qos=0)
+                await asyncio.sleep(0.05)
+
+    flooder = asyncio.create_task(flood())
+    await asyncio.sleep(0.2)
+    out = MqttOutput(_settings(broker_port, sid))
+    try:
+        async with out._new_client("seedtest") as client:
+            started = asyncio.get_running_loop().time()
+            found = await out._receive_retained(client, timeout=1.0)
+            elapsed = asyncio.get_running_loop().time() - started
+    finally:
+        stop.set()
+        await flooder
+    assert elapsed < 1.4
+    assert set(found) == {"state", "hello"}

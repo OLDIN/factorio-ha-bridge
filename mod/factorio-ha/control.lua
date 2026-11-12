@@ -1,94 +1,110 @@
 -- factorio-ha: streams server state to a local relay over UDP (protocol v1, docs/protocol.md).
 -- Nothing but hello/heartbeat is sent until the relay delivers a config from Home Assistant.
+-- This file only subscribes to events and dispatches to modules in scripts/.
 
-local PROTOCOL = 1
+local transport = require("scripts.transport")
+local config = require("scripts.config")
+local planets = require("scripts.planets")
+local research = require("scripts.research")
+local evolution = require("scripts.evolution")
+local defense = require("scripts.defense")
+local players = require("scripts.players")
+
 local HEARTBEAT_TICKS = 300 -- 5 s
 local SNAPSHOT_TICKS = 3600 -- 60 s
-local CATEGORIES = { "players" }
+local CHECK_TICKS = 600 -- 10 s: research progress, evolution, defense push
 
--- Session-local: only throttles a log line, never affects game state.
-local send_failure_logged = false
-
-local function send(msg)
-  msg.v = PROTOCOL
-  msg.tick = game.tick
-  local port = settings.global["factorio-ha-udp-port"].value
-  -- for_player = 0: only the server sends, never the clients.
-  local ok, err = pcall(helpers.send_udp, port, helpers.table_to_json(msg), 0)
-  if not ok and not send_failure_logged then
-    send_failure_logged = true
-    log("factorio-ha: UDP send failed (is the server started with --enable-lua-udp?): " .. tostring(err))
-  end
-end
-
-local function categories()
-  return (storage.config and storage.config.categories) or {}
-end
-
-local function enabled(name)
-  return categories()[name] == true
-end
-
-local function any_enabled()
-  for _, on in pairs(categories()) do
-    if on then return true end
-  end
-  return false
-end
-
-local function online_names()
-  local names = {}
-  for _, player in pairs(game.connected_players) do
-    names[#names + 1] = player.name
-  end
-  table.sort(names)
-  return names
-end
+-- Session-local: only decides whether the server sends a snapshot (server-only UDP), no desync.
+local config_seen_this_session = false
 
 local function collect()
   local data = {}
-  if enabled("players") then
-    data.players = { online = online_names() }
+  if config.enabled("players") then
+    data.players = players.collect()
   end
+  if config.enabled("planets") then data.planets = planets.collect() end
+  if config.enabled("research") then data.research = research.snapshot() end
+  if config.enabled("evolution") then data.evolution = evolution.snapshot() end
+  if config.enabled("defense") then data.defense = defense.snapshot() end
   return data
 end
 
-local function send_hello()
-  send({ type = "hello", mod_version = script.active_mods["factorio-ha"] })
+local function send_hello(reason)
+  transport.send({ type = "hello", mod_version = script.active_mods["factorio-ha"], reason = reason })
 end
 
 local function send_heartbeat()
-  send({ type = "heartbeat", players_online = #game.connected_players })
+  transport.send({ type = "heartbeat", players_online = #game.connected_players })
 end
 
 local function send_snapshot()
-  send({ type = "snapshot", data = collect() })
+  transport.send_snapshot(collect())
 end
 
 local function player_event(event_name, player_index)
   send_heartbeat()
-  if not enabled("players") then return end
+  if not config.enabled("players") then return end
   local player = game.get_player(player_index)
-  send({ type = "update", data = { players = { online = online_names() } } })
-  send({ type = "event", event = event_name, data = { player = player and player.name or "?" } })
+  players.refresh()
+  transport.send({ type = "event", event = event_name, data = { player = player and player.name or "?" } })
 end
 
 script.on_init(function()
-  storage.config = { categories = {} }
-  send_hello()
+  config.init()
+  send_hello("init")
 end)
 
 script.on_configuration_changed(function()
-  storage.config = storage.config or { categories = {} }
-  send_hello()
+  config.init()
+  send_hello("configuration_changed")
 end)
 
-script.on_nth_tick(HEARTBEAT_TICKS, send_heartbeat)
+-- Every 5 s: heartbeat, and attacks (running ones are pushed, quiet ones ended).
+script.on_nth_tick(HEARTBEAT_TICKS, function()
+  send_heartbeat()
+  defense.tick_attacks()
+end)
+
+script.on_nth_tick(CHECK_TICKS, function()
+  research.refresh(false)
+  evolution.refresh()
+  defense.refresh()
+  players.refresh() -- AFK minutes
+end)
+
+-- Turret scanner: one portion per step (a lap takes CHECK_TICKS).
+script.on_nth_tick(defense.SCAN_TICKS, defense.scan_step)
 
 script.on_nth_tick(SNAPSHOT_TICKS, function()
-  send_hello()
-  if any_enabled() then send_snapshot() end
+  send_hello("periodic")
+  if config.any_enabled() then send_snapshot() end
 end)
+
+script.on_event(defines.events.on_research_finished, function(e)
+  -- Only the player force matters (enemy/other forces research too).
+  if e.research.force.name ~= "player" then return end
+  research.on_finished(e)
+  planets.refresh() -- a finished discovery tech unlocks bodies
+end)
+
+script.on_event(defines.events.on_surface_created, planets.refresh)
+script.on_event(defines.events.on_surface_deleted, planets.refresh)
+
+local turret_filters = {}
+for _, t in ipairs(defense.TURRET_TYPES) do
+  turret_filters[#turret_filters + 1] = { filter = "type", type = t }
+end
+script.on_event(defines.events.on_built_entity, defense.on_built, turret_filters)
+script.on_event(defines.events.on_robot_built_entity, defense.on_built, turret_filters)
+script.on_event(defines.events.script_raised_built, defense.on_built, turret_filters)
+script.on_event(defines.events.script_raised_revive, defense.on_built, turret_filters)
+script.on_event(defines.events.on_entity_cloned, defense.on_built, turret_filters) -- uses event.destination
+script.on_event(defines.events.on_object_destroyed, defense.on_object_destroyed)
+script.on_event(defines.events.on_entity_damaged, defense.on_entity_damaged,
+  { { filter = "type", type = "wall" }, { filter = "type", type = "gate" } })
+
+script.on_event(defines.events.on_entity_died, defense.on_entity_died)
+script.on_event(defines.events.on_player_died, players.on_died)
 
 script.on_event(defines.events.on_player_joined_game, function(e)
   player_event("player_joined", e.player_index)
@@ -105,18 +121,16 @@ commands.add_command("factorio-ha-config", "Internal: configuration from the fac
     if player then player.print("factorio-ha: this command is for the server only") end
     return
   end
-  local parsed = helpers.json_to_table(cmd.parameter or "")
-  if type(parsed) ~= "table" or parsed.v ~= PROTOCOL then
+  local ok, changed = config.apply(helpers.json_to_table(cmd.parameter or ""))
+  if not ok then
     rcon.print("error: invalid config")
     return
   end
-  local wanted = type(parsed.categories) == "table" and parsed.categories or {}
-  local config = { categories = {} }
-  for _, name in ipairs(CATEGORIES) do
-    config.categories[name] = wanted[name] == true
-  end
-  storage.config = config
   rcon.print("ok")
-  -- Always one snapshot after a config: it also clears categories that were just turned off.
-  send_snapshot()
+  -- A snapshot only when the config changed or it is the first one since the game loaded
+  -- (a new game session: the relay has no state for it yet).
+  if changed or not config_seen_this_session then
+    config_seen_this_session = true
+    send_snapshot()
+  end
 end)

@@ -30,6 +30,9 @@ def _normalize_data(data: Any) -> dict[str, Any]:
     players = data.get("players")
     if isinstance(players, dict) and players.get("online") == {}:
         data = {**data, "players": {**players, "online": []}}
+    # Same for a category whose table is empty: top level only, deeper is the consumer's job.
+    if any(value == [] for value in data.values()):
+        data = {k: ({} if v == [] else v) for k, v in data.items()}
     return data
 
 

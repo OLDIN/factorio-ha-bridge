@@ -1,10 +1,12 @@
 {
   "name": "factorio-ha",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "title": "Factorio → Home Assistant",
   "author": "OLDIN",
   "homepage": "https://github.com/OLDIN/factorio-ha-bridge",
   "factorio_version": "2.1",
-  "dependencies": ["base >= 2.1"],
+  "dependencies": [
+    "base >= 2.1"
+  ],
   "description": "Streams live server state (players, game state) to Home Assistant through a small relay running next to the server."
 }

@@ -31,6 +31,8 @@ async def main() -> None:
             _LOGGER.info("Continuing from retained state: %s", retained["state"].get("game_state"))
         if "hello" in retained:
             relay.seed_hello(retained["hello"])
+        if "data" in retained:
+            relay.seed_data(retained["data"])
 
     transport = await start_udp_listener(settings.udp_host, settings.udp_port, relay.handle_datagram)
     _LOGGER.info("Listening for the mod on udp://%s:%s", settings.udp_host, settings.udp_port)

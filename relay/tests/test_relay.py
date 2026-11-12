@@ -14,7 +14,7 @@ OFF_CMD = '/factorio-ha-config {"v":1,"categories":{}}'
 
 class FakeOutput:
     def __init__(self):
-        self.hello, self.state, self.event = [], [], []
+        self.hello, self.state, self.event, self.data = [], [], [], []
 
     async def publish_hello(self, hello):
         self.hello.append(hello)
@@ -24,6 +24,9 @@ class FakeOutput:
 
     async def publish_event(self, event):
         self.event.append(event)
+
+    async def publish_data(self, category, payload):
+        self.data.append((category, payload))
 
 
 class FakeRcon:
@@ -254,3 +257,66 @@ async def test_seed_hello_does_not_override_live_version(env):
     relay.seed_hello({"mod_version": "0.1.0"})
     await relay.on_output_connected()
     assert output.hello[-1]["mod_version"] == "0.2.0"
+
+
+async def test_periodic_hello_does_not_resend_config(env):
+    relay, _, rcon, _ = env
+    await relay.on_config(ON)
+    await relay.process_datagram(dg({"type": "hello", "tick": 1, "mod_version": "0.2.0", "reason": "periodic"}))
+    assert rcon.commands == [ON_CMD]
+
+
+async def test_init_hello_resends_config(env):
+    relay, _, rcon, _ = env
+    await relay.on_config(ON)
+    await relay.process_datagram(dg({"type": "hello", "tick": 1, "mod_version": "0.2.0", "reason": "init"}))
+    assert rcon.commands == [ON_CMD, ON_CMD]
+
+
+async def test_hello_without_reason_resends_config(env):
+    relay, _, rcon, _ = env
+    await relay.on_config(ON)
+    await relay.process_datagram(dg({"type": "hello", "tick": 1, "mod_version": "0.1.0"}))
+    assert rcon.commands == [ON_CMD, ON_CMD]
+
+
+async def test_changed_category_published_once(env):
+    relay, output, _, _ = env
+    snap = {"type": "snapshot", "tick": 10, "data": {"research": {"queue": ["a"]}}}
+    await relay.process_datagram(dg(snap))
+    await relay.process_datagram(dg({**snap, "tick": 20}))
+    assert output.data == [("research", {"v": 1, "tick": 10, "data": {"queue": ["a"]}})]
+
+
+async def test_removed_category_published_as_none(env):
+    relay, output, _, _ = env
+    await relay.process_datagram(dg({"type": "snapshot", "tick": 10, "data": {"research": {"queue": []}}}))
+    await relay.process_datagram(dg({"type": "snapshot", "tick": 20, "data": {}}))
+    assert output.data[-1] == ("research", None)
+
+
+async def test_multipart_snapshot_applied_when_complete(env):
+    relay, output, _, _ = env
+    await relay.process_datagram(dg({"type": "snapshot", "tick": 9, "part": 1, "parts": 2,
+                                     "data": {"planets": {"bodies": []}}}))
+    assert output.data == []
+    await relay.process_datagram(dg({"type": "snapshot", "tick": 9, "part": 2, "parts": 2,
+                                     "data": {"research": {"queue": []}}}))
+    assert {c for c, _ in output.data} == {"planets", "research"}
+
+
+async def test_bad_category_name_skipped(env):
+    relay, output, _, _ = env
+    await relay.process_datagram(dg({"type": "snapshot", "tick": 10,
+                                     "data": {"Bad/Name": {"a": 1}, "research": {"queue": []}}}))
+    assert [c for c, _ in output.data] == ["research"]
+
+
+async def test_seed_data_does_not_override_fresh(env):
+    relay, output, _, _ = env
+    await relay.process_datagram(dg({"type": "snapshot", "tick": 10, "data": {"research": {"queue": ["new"]}}}))
+    relay.seed_data({"research": {"queue": ["old"]}, "planets": {"bodies": []}})
+    await relay.on_output_connected()
+    published = dict(output.data)
+    assert published["research"]["data"] == {"queue": ["new"]}
+    assert published["planets"]["data"] == {"bodies": []}
