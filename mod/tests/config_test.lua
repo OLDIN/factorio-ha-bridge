@@ -39,3 +39,10 @@ ok, changed = config.apply({ v = 1, categories = { machines = true }, lines = { 
 assert(ok and not changed and not config.line_output_full(), "only true turns it on")
 
 print("config_test ok")
+
+-- 2c: platforms is a category
+do
+  local ok2, changed2 = config.apply({ v = 1, categories = { platforms = true } })
+  assert(ok2 and changed2 and config.enabled("platforms"))
+  print("config platforms ok")
+end

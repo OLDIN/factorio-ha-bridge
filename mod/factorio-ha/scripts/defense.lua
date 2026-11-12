@@ -305,5 +305,6 @@ function defense.refresh()
 end
 
 defense.TURRET_TYPES = TURRET_TYPES
+defense.NOT_LOSSES = NOT_LOSSES -- entity types whose death is not a loss (also for platforms)
 
 return defense

@@ -249,3 +249,37 @@ turrets, `research`, `players`).
   all other categories live in `data/*` only.
 - On startup the relay also reads its own retained `data/*` topics; fresh game data wins
   over the retained copy, and only categories not yet known are filled from it.
+
+## 2c additions (platforms)
+
+### Categories (`data.<category>`)
+
+```json
+"platforms": {"list": [
+  {"index": 3, "name": "Hauler 2", "state": "on_the_path",
+   "route": {"from": "fulgora", "to": "gleba", "progress": 0.62},
+   "damage": {"active": true, "since_tick": 90000000, "losses": {"transport-belt": 2}}},
+  {"index": 5, "name": "Science", "state": "waiting_for_departure", "location": "nauvis"}]}
+```
+
+- `list`: the platforms of the player force, sorted by `index`; platforms scheduled for deletion
+  are left out. `state` is a `defines.space_platform_state` name.
+- `location` (the space location's name) while the platform is at a location; `route` while it
+  is on a space connection: `from` and `to` in the **direction of travel** (the end the platform
+  last visited is `from`), `progress` 0–1 from `from` to `to`, rounded to 0.01.
+- `damage`: losses of player-force entities on the platform's surface, whatever killed them
+  (asteroids mostly), merged into one episode while they come less than 3600 ticks apart.
+  `active` while the episode runs; the entry stays (`active: false`) for 36000 ticks (10 game
+  minutes) after the last loss, then disappears.
+- Updated on `on_space_platform_changed_state`, when a damage episode starts, and every
+  600 ticks while something changed (flying platforms move).
+
+### New events
+
+Sent only while `platforms` is enabled.
+
+| event | data |
+|---|---|
+| `platform_departed` | `index`, `name`, `from`, `to` (the state became `on_the_path`) |
+| `platform_arrived` | `index`, `name`, `location` (the state stopped being `on_the_path` at a location) |
+| `platform_damaged` | `index`, `name`, `losses` `{name: count}`, `duration_s` (a damage episode ended: 3600 ticks without losses) |
