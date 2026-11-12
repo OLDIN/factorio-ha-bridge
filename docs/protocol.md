@@ -154,6 +154,54 @@ part, so with split snapshots the players (and other categories) would flicker. 
 - If `defense` is switched off during an attack, **no** `attack_ended` is sent and the
   attack state is dropped. Consumers must treat a missing `attack` as "no attack".
 
+## 2b additions (machines, drills)
+
+Two new categories, `machines` and `drills`; both are updated after a full scanner lap
+(every 600 ticks) when their content changed, and are part of the 60 s snapshot.
+After a category is enabled (or the game loads a save without the registry), it is absent
+from updates and snapshots until the first full scanner lap after the initial fill is done,
+so consumers never see partial totals. Only enabled categories are sent.
+
+```json
+"machines": {"by_planet": {"nauvis": {"total": 1551, "working": 1412,
+             "groups": [{"recipe": "iron-plate", "total": 96, "working": 58, "no_input": 36, "output_full": 2,
+                         "no_power": 0, "at": [[-120, 40], [-118, 40]]}]}}}
+"drills":   {"by_planet": {"nauvis": {"total": 140, "working": 110,
+             "by_resource": {"iron-ore": {"total": 96, "working": 80, "depleted": 14, "stuck": 2}}}}}
+```
+
+- Scope: `player`-force entities of type `assembling-machine`, `furnace`, `rocket-silo` (machines)
+  and `mining-drill` (drills) on planet surfaces. Machines without a recipe are not counted
+  (a furnace keeps its previous recipe).
+- Status buckets: `working`, `no_input` (ingredient/fluid shortage), `output_full`, `no_power`
+  (no/low power, no fuel, frozen), `depleted` (drills: `no_minable_resources`), `off` (disabled)
+  and `other`; so `working + no_input + output_full + no_power <= total`. "Stopped" is
+  `no_input + output_full + no_power`.
+- `machines.by_planet.<planet>.groups`: only groups with at least 10% of their machines stopped,
+  at most 20 per planet, most-stopped first; `at` holds at most 3 positions of stopped machines.
+  The whole category must fit one datagram: when its JSON exceeds `MAX_DATAGRAM - 200` bytes
+  the groups with the smallest stopped share are dropped (across all planets); totals stay.
+- `drills.by_planet.<planet>.by_resource.<resource>`: `stuck` is `output_full + no_power + no_input`
+  (including a missing fluid for extraction). A depleted drill keeps its last known resource;
+  a drill that was already depleted when first seen is counted under `unknown`.
+- The scanner takes a portion every 6 ticks (`max(ceil(N / 100), 20)` entities), so a lap is about
+  600 ticks; the registry is filled at most 200 entities per step on first enable and is
+  dropped when both categories are switched off.
+
+### Relay → MQTT (game clock)
+
+| topic | retained | payload |
+|---|---|---|
+| `factorio/<id>/tick` | no | `{"v":1,"tick":123}` — on every mod heartbeat (every 300 ticks while the game runs) |
+
+The game clock for rules measured in game time (production lines in HA). `data/*` and `state`
+are published only on change, so a stalled, unchanging line would otherwise yield no new tick.
+A paused game sends no heartbeat, so the clock stands still too. Nothing is published to it from
+restored state, `hello`, `snapshot`, `update` or `event`.
+
+Compatibility: the production-line rule in the integration needs relay >= 0.3.0; with an older relay
+the hold time is counted only by the ticks of category changes.
+
 ### Lua JSON quirks
 
 - **Absent means null.** Lua JSON cannot emit `null`, so a field that would be `null` is

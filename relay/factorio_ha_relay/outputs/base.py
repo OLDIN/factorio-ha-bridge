@@ -30,4 +30,7 @@ class Output(Protocol):
     async def publish_data(self, category: str, payload: dict[str, Any] | None) -> None:
         """Publish one data category (retained); ``None`` removes it."""
 
+    async def publish_tick(self, tick: dict[str, Any]) -> None:
+        """Publish the game clock (not retained); sent once per mod heartbeat, so it stops while the game is paused."""
+
     async def stop(self) -> None: ...

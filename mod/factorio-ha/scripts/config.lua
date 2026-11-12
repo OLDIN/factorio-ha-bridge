@@ -2,7 +2,7 @@
 
 local config = {}
 
-config.CATEGORIES = { "players", "planets", "defense", "evolution", "research" }
+config.CATEGORIES = { "players", "planets", "defense", "evolution", "research", "machines", "drills" }
 
 local function stored()
   return (storage.config and storage.config.categories) or {}
