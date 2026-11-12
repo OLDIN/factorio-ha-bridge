@@ -148,8 +148,12 @@ end
 -- encode(data) is at most max_bytes: drops groups one at a time, smallest stopped share first
 -- (across all planets; ties: fewer machines, then planet and recipe name). Totals stay.
 -- Returns the number of dropped groups.
+-- The size of every candidate group is measured once (encode of the group alone + 1 for its
+-- comma) and subtracted along the drop order; the whole category is then encoded once to
+-- verify, and one more group is dropped (and verified again) only if the estimate was short.
 function production.trim_groups(data, max_bytes, encode)
-  if #encode(data) <= max_bytes then return 0 end
+  local size = #encode(data)
+  if size <= max_bytes then return 0 end
   local list = {}
   for planet, entry in pairs(data.by_planet) do
     for _, g in ipairs(entry.groups) do
@@ -163,14 +167,25 @@ function production.trim_groups(data, max_bytes, encode)
     if a.planet ~= b.planet then return a.planet < b.planet end
     return a.group.recipe < b.group.recipe
   end)
+  local drops, estimate = 0, size
+  while drops < #list and estimate > max_bytes do
+    drops = drops + 1
+    estimate = estimate - (#encode(list[drops].group) + 1)
+  end
   local dropped = 0
-  for _, item in ipairs(list) do
-    local groups = data.by_planet[item.planet].groups
-    for i, g in ipairs(groups) do
-      if g == item.group then table.remove(groups, i); break end
+  local function drop_to(n)
+    while dropped < n do
+      dropped = dropped + 1
+      local item = list[dropped]
+      local groups = data.by_planet[item.planet].groups
+      for i, g in ipairs(groups) do
+        if g == item.group then table.remove(groups, i); break end
+      end
     end
-    dropped = dropped + 1
-    if #encode(data) <= max_bytes then break end
+  end
+  drop_to(drops)
+  while dropped < #list and #encode(data) > max_bytes do
+    drop_to(dropped + 1)
   end
   return dropped
 end

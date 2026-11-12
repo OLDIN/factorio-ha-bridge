@@ -158,6 +158,9 @@ part, so with split snapshots the players (and other categories) would flicker. 
 
 Two new categories, `machines` and `drills`; both are updated after a full scanner lap
 (every 600 ticks) when their content changed, and are part of the 60 s snapshot.
+After a category is enabled (or the game loads a save without the registry), it is absent
+from updates and snapshots until the first full scanner lap after the initial fill is done,
+so consumers never see partial totals. Only enabled categories are sent.
 
 ```json
 "machines": {"by_planet": {"nauvis": {"total": 1551, "working": 1412,

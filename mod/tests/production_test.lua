@@ -182,6 +182,11 @@ do
   local function encode(v)  -- tiny deterministic stand-in for helpers.table_to_json
     local function enc(x)
       if type(x) ~= "table" then return tostring(x) end
+      if #x > 0 then  -- JSON-like array: elements joined by commas, no keys
+        local items = {}
+        for i, v in ipairs(x) do items[i] = enc(v) end
+        return "[" .. table.concat(items, ",") .. "]"
+      end
       local keys = {}
       for k in pairs(x) do keys[#keys + 1] = k end
       table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
@@ -226,6 +231,65 @@ do
   production.trim_groups(d, after_one - 1, encode)
   assert(#d.by_planet.nauvis.groups == 2 and #d.by_planet.gleba.groups == 1
     and d.by_planet.gleba.groups[1].recipe == "e")
+  -- large input: same result as dropping one group at a time, with only a few encodes
+  do
+    local function big()
+      local by_planet = {}
+      for pi = 1, 10 do
+        local groups = {}
+        for gi = 1, 20 do
+          groups[gi] = grp("r" .. pi .. "_" .. gi, 10 + gi, (gi * 7 + pi) % (10 + gi) + 1)
+          groups[gi].at = { { gi, pi }, { gi, pi + 1 } }
+        end
+        by_planet["p" .. pi] = { total = 500, working = 100, groups = groups }
+      end
+      return { by_planet = by_planet }
+    end
+    local function naive(data, max_bytes)  -- the previous one-by-one algorithm
+      local list = {}
+      for planet, entry in pairs(data.by_planet) do
+        for _, g in ipairs(entry.groups) do
+          list[#list + 1] = { planet = planet, group = g, share = (g.no_input + g.output_full + g.no_power) / g.total }
+        end
+      end
+      table.sort(list, function(a, b)
+        if a.share ~= b.share then return a.share < b.share end
+        if a.group.total ~= b.group.total then return a.group.total < b.group.total end
+        if a.planet ~= b.planet then return a.planet < b.planet end
+        return a.group.recipe < b.group.recipe
+      end)
+      local dropped = 0
+      if #encode(data) <= max_bytes then return 0 end
+      for _, item in ipairs(list) do
+        local groups = data.by_planet[item.planet].groups
+        for i, g in ipairs(groups) do
+          if g == item.group then table.remove(groups, i); break end
+        end
+        dropped = dropped + 1
+        if #encode(data) <= max_bytes then break end
+      end
+      return dropped
+    end
+    local total = #encode(big())
+    for _, limit in ipairs({ total, total - 1, total * 3 // 4, total // 2, total // 10, 1 }) do
+      local want, got = big(), big()
+      local n_want = naive(want, limit)
+      local calls = 0
+      local n_got = production.trim_groups(got, limit, function(v) calls = calls + 1; return encode(v) end)
+      assert(n_got == n_want, "limit " .. limit .. ": dropped " .. n_got .. " want " .. n_want)
+      assert(encode(got) == encode(want), "limit " .. limit .. ": same remaining groups")
+      -- 1 initial + per-group sizes (<= 200) + a few verifications
+      assert(calls <= 200 + 5, "limit " .. limit .. ": " .. calls .. " encodes")
+    end
+    -- encodes of the whole category stay constant (group sizes are measured on single groups)
+    local whole = 0
+    local data = big()
+    production.trim_groups(data, total // 2, function(v)
+      if v.by_planet then whole = whole + 1 end
+      return encode(v)
+    end)
+    assert(whole <= 4, "whole-category encodes: " .. whole)
+  end
 end
 
 print("production_test ok")
