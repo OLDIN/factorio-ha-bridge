@@ -173,14 +173,17 @@ end
 function machines.collect_machines()
   local m = storage.machines
   if not (m and m.ready) then return nil end
+  local with_output_full = config.line_output_full()
   local by_planet = {}
   for _, planet in ipairs(sorted_planets(m.machines)) do
     local sm = production.summary(m.machines, planet)
+    local b = production.buckets(m.machines, planet)
     by_planet[planet] = { total = sm.total, working = sm.working,
-                          groups = production.groups(m.machines, planet, MIN_SHARE, MAX_GROUPS, MAX_POSITIONS) }
+                          no_input = b.no_input, output_full = b.output_full, no_power = b.no_power,
+                          groups = production.groups(m.machines, planet, MIN_SHARE, MAX_GROUPS, MAX_POSITIONS, with_output_full) }
   end
   local data = { by_planet = by_planet }
-  production.trim_groups(data, MAX_BYTES, function(d) return helpers.table_to_json({ machines = d }) end)
+  production.trim_groups(data, MAX_BYTES, function(d) return helpers.table_to_json({ machines = d }) end, with_output_full)
   return data
 end
 

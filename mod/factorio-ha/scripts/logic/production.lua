@@ -89,14 +89,31 @@ function production.summary(state, location)
   return { total = loc.total, working = loc.working }
 end
 
-local function idle_count(g)
-  return g.no_input + g.output_full + g.no_power
+-- Machines of `g` that stand: "output full" counts only when the line rule says so (saturated
+-- malls and buffers are not a problem for most players).
+local function idle_count(g, with_output_full)
+  return g.no_input + g.no_power + (with_output_full and g.output_full or 0)
 end
 
--- Up to `n` positions of idle machines (lowest ids first, deterministic).
-local function some_positions(idle, n)
+-- Sum of the stopped buckets over every group of a location (the planet-level counters).
+function production.buckets(state, location)
+  local out = { no_input = 0, output_full = 0, no_power = 0 }
+  local loc = state.locations[location]
+  if not loc then return out end
+  for _, g in pairs(loc.groups) do
+    out.no_input = out.no_input + g.no_input
+    out.output_full = out.output_full + g.output_full
+    out.no_power = out.no_power + g.no_power
+  end
+  return out
+end
+
+-- Up to `n` positions of stopped machines (lowest ids first, deterministic).
+local function some_positions(state, idle, n, with_output_full)
   local ids = {}
-  for id in pairs(idle) do ids[#ids + 1] = id end
+  for id in pairs(idle) do
+    if with_output_full or state.machines[id].bucket ~= "output_full" then ids[#ids + 1] = id end
+  end
   table.sort(ids)
   local at = {}
   for i = 1, math.min(n, #ids) do
@@ -106,12 +123,12 @@ local function some_positions(idle, n)
   return at
 end
 
-function production.groups(state, location, min_share, max_groups, max_positions)
+function production.groups(state, location, min_share, max_groups, max_positions, with_output_full)
   local loc = state.locations[location]
   local list = {}
   if not loc then return list end
   for key, g in pairs(loc.groups) do
-    local idle = idle_count(g)
+    local idle = idle_count(g, with_output_full)
     -- epsilon guards against float error such as 0.1 * 30
     if idle > 0 and idle >= min_share * g.total - 1e-9 then
       list[#list + 1] = { key = key, share = idle / g.total, g = g }
@@ -127,7 +144,7 @@ function production.groups(state, location, min_share, max_groups, max_positions
     out[i] = {
       recipe = list[i].key, total = g.total, working = g.working,
       no_input = g.no_input, output_full = g.output_full, no_power = g.no_power,
-      at = some_positions(g.idle, max_positions),
+      at = some_positions(state, g.idle, max_positions, with_output_full),
     }
   end
   return out
@@ -139,7 +156,7 @@ function production.resources(state, location)
   if not loc then return out end
   for key, g in pairs(loc.groups) do
     out[key] = { total = g.total, working = g.working, depleted = g.depleted,
-                 stuck = idle_count(g) }
+                 stuck = idle_count(g, true) }
   end
   return out
 end
@@ -151,14 +168,14 @@ end
 -- The size of every candidate group is measured once (encode of the group alone + 1 for its
 -- comma) and subtracted along the drop order; the whole category is then encoded once to
 -- verify, and one more group is dropped (and verified again) only if the estimate was short.
-function production.trim_groups(data, max_bytes, encode)
+function production.trim_groups(data, max_bytes, encode, with_output_full)
   local size = #encode(data)
   if size <= max_bytes then return 0 end
   local list = {}
   for planet, entry in pairs(data.by_planet) do
     for _, g in ipairs(entry.groups) do
       list[#list + 1] = { planet = planet, group = g,
-                          share = (g.no_input + g.output_full + g.no_power) / g.total }
+                          share = idle_count(g, with_output_full) / g.total }
     end
   end
   table.sort(list, function(a, b)

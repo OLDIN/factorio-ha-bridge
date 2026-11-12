@@ -49,6 +49,10 @@ The relay forwards it as the RCON command `/factorio-ha-config <json>`
 in-game players). An empty payload (integration removed) is forwarded as
 `{"v":1,"categories":{}}`, which turns everything off.
 
+Optional `"lines":{"output_full":true}` (0.3.1+): an "output full" machine counts as stopped when
+the mod picks, orders and trims the `machines` groups. Without it (the default) only `no_input`
+and `no_power` count, so saturated malls and buffers are not reported as stopped lines.
+
 The relay re-sends the last config when: a new config arrives, RCON
 (re)connects, or the mod sends `hello`.
 
@@ -164,6 +168,7 @@ so consumers never see partial totals. Only enabled categories are sent.
 
 ```json
 "machines": {"by_planet": {"nauvis": {"total": 1551, "working": 1412,
+             "no_input": 40, "output_full": 95, "no_power": 0,
              "groups": [{"recipe": "iron-plate", "total": 96, "working": 58, "no_input": 36, "output_full": 2,
                          "no_power": 0, "at": [[-120, 40], [-118, 40]]}]}}}
 "drills":   {"by_planet": {"nauvis": {"total": 140, "working": 110,
@@ -177,7 +182,10 @@ so consumers never see partial totals. Only enabled categories are sent.
   (no/low power, no fuel, frozen), `depleted` (drills: `no_minable_resources`), `off` (disabled)
   and `other`; so `working + no_input + output_full + no_power <= total`. "Stopped" is
   `no_input + output_full + no_power`.
-- `machines.by_planet.<planet>.groups`: only groups with at least 10% of their machines stopped,
+- `machines.by_planet.<planet>`: `no_input`, `output_full`, `no_power` (0.3.1+) count every machine of
+  the planet, groups below the threshold included.
+- `machines.by_planet.<planet>.groups`: "stopped" here is `no_input + no_power`, plus `output_full`
+  when the config asks for it (`lines.output_full`); only groups with at least 10% of their machines stopped,
   at most 20 per planet, most-stopped first; `at` holds at most 3 positions of stopped machines.
   The whole category must fit one datagram: when its JSON exceeds `MAX_DATAGRAM - 200` bytes
   the groups with the smallest stopped share are dropped (across all planets); totals stay.

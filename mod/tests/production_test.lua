@@ -92,7 +92,7 @@ do
       production.set(s, id, "nauvis", "r" .. i, j <= i / 3 + 1 and "output_full" or "working", { id, 0 })
     end
   end
-  local g = production.groups(s, "nauvis", 0.1, 20, 3)
+  local g = production.groups(s, "nauvis", 0.1, 20, 3, true)
   assert(#g == 20, #g)
   local min_share = 1
   for _, x in ipairs(g) do min_share = math.min(min_share, x.output_full / x.total) end
@@ -290,6 +290,48 @@ do
     end)
     assert(whole <= 4, "whole-category encodes: " .. whole)
   end
+end
+
+-- "output full" is not "stopped" unless the line rule says so (saturated malls and buffers)
+do
+  local s = production.new()
+  add(s, 1, 3, "nauvis", "barrel", "output_full")          -- a mall: everything full
+  add(s, 4, 9, "nauvis", "iron-plate", "working")
+  add(s, 10, 11, "nauvis", "iron-plate", "output_full")
+  add(s, 12, 13, "nauvis", "iron-plate", "no_input")
+  local off = production.groups(s, "nauvis", 0.1, 20, 3, false)
+  assert(#off == 1 and off[1].recipe == "iron-plate", "only the starving group without the flag")
+  assert(#off[1].at == 2 and off[1].at[1][1] == 12 and off[1].at[2][1] == 13, "positions of starving machines only")
+  assert(off[1].output_full == 2, "the counters stay facts")
+  local on = production.groups(s, "nauvis", 0.1, 20, 3, true)
+  assert(#on == 2 and on[1].recipe == "barrel", "with the flag the full mall is the worst")
+  assert(#on[2].at == 3, "with the flag full machines are positions too")
+  local b = production.buckets(s, "nauvis")
+  assert(b.no_input == 2 and b.output_full == 5 and b.no_power == 0, "planet counters cover all groups")
+  local none = production.buckets(s, "vulcanus")
+  assert(none.no_input == 0 and none.output_full == 0 and none.no_power == 0)
+end
+
+-- trimming drops the least stopped first by the same rule
+do
+  local function grp(recipe, total, no_input, output_full)
+    return { recipe = recipe, total = total, working = total - no_input - output_full,
+             no_input = no_input, output_full = output_full, no_power = 0, at = {} }
+  end
+  local function data()
+    return { by_planet = { nauvis = { total = 30, working = 10, groups = {
+      grp("full-mall", 10, 0, 10), grp("starving", 10, 5, 0), grp("half", 10, 2, 0) } } } }
+  end
+  -- 100 bytes per group in the whole category, 99 per group alone (+1 for the comma)
+  local function size(d)
+    return string.rep("x", d.by_planet and #d.by_planet.nauvis.groups * 100 or 99)
+  end
+  local d = data()
+  production.trim_groups(d, 100, size, false)
+  assert(#d.by_planet.nauvis.groups == 1 and d.by_planet.nauvis.groups[1].recipe == "starving", "without the flag a full group is dropped first")
+  d = data()
+  production.trim_groups(d, 100, size, true)
+  assert(d.by_planet.nauvis.groups[1].recipe == "full-mall", "with the flag the full group is the most stopped")
 end
 
 print("production_test ok")
