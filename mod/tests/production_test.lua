@@ -271,7 +271,7 @@ do
       return dropped
     end
     local total = #encode(big())
-    for _, limit in ipairs({ total, total - 1, total * 3 // 4, total // 2, total // 10, 1 }) do
+    for _, limit in ipairs({ total, total - 1, math.floor(total * 3 / 4), math.floor(total / 2), math.floor(total / 10), 1 }) do
       local want, got = big(), big()
       local n_want = naive(want, limit)
       local calls = 0
@@ -284,7 +284,7 @@ do
     -- encodes of the whole category stay constant (group sizes are measured on single groups)
     local whole = 0
     local data = big()
-    production.trim_groups(data, total // 2, function(v)
+    production.trim_groups(data, math.floor(total / 2), function(v)
       if v.by_planet then whole = whole + 1 end
       return encode(v)
     end)
