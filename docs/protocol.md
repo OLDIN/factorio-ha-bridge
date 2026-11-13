@@ -63,8 +63,8 @@ Topic prefix is fixed: `factorio`. JSON is compact (`separators=(",", ":")`).
 | topic | retained | payload |
 |---|---|---|
 | `factorio/<id>/availability` | yes, last will `offline` | `online` / `offline` |
-| `factorio/<id>/hello` | yes | `{"v":1,"server_id":"main","relay_version":"0.1.0","mod_version":"0.1.0"}` (`mod_version` is `null` until the mod says hello) |
-| `factorio/<id>/state` | yes | `{"v":1,"game_state":"running","game_state_reason":null,"game_state_since":"<ISO-8601 UTC>","tick":123,"players_online":1,"data":{"players":{"online":["alice"]}}}` — published only when something other than `tick` changes |
+| `factorio/<id>/hello` | yes | `{"v":1,"server_id":"main","relay_version":"0.1.0","mod_version":"0.1.0","game_version":"2.0.72"}` (`mod_version` is `null` until the mod says hello, `game_version` until RCON answers `/version`) |
+| `factorio/<id>/state` | yes | `{"v":1,"game_state":"running","game_state_reason":null,"game_state_since":"<ISO-8601 UTC>","tick":123,"players_online":1,"data":{"players":{"online":["alice"]}},"ups":59.8,"server_started":"<ISO-8601 UTC>"}` — published only when something other than `tick` changes; `ups` and `server_started` may be `null` (see "Server health") |
 | `factorio/<id>/event` | no | `{"v":1,"event":"player_joined","tick":123,"time":"<ISO-8601 UTC>","data":{"player":"guest"}}` |
 | `factorio/<id>/config` | yes, written by HA | see above |
 
@@ -85,6 +85,21 @@ them, so a relay restart never blanks the last known values or the mod version.
 The relay keeps one persistent authenticated RCON connection: a live
 connection means the Factorio process is alive. Commands time out without
 dropping the connection, because a paused game may not answer them.
+
+## Server health (computed by the relay)
+
+- `ups`: game updates per second, from the ticks of the heartbeats (every 300 ticks) over
+  the last 60 s of real time, rounded to 0.1. `null` until the heartbeats span 30 s, and
+  again when the server is `stopped`, the game is paused without players, or no heartbeat
+  came for 60 s. A slow game (heartbeats more than 15 s apart, under ~20 UPS) keeps its
+  value although `game_state` already reads `paused`/`unknown`. A tick lower than the
+  previous one (a save was loaded) starts a new measurement. Updated in `state` at most
+  once a minute.
+- `server_started`: when the relay saw RCON answer after a gap: every (re)connect,
+  including the relay's own start. Not restored from the retained `state`, so after a
+  restart of the relay alone it counts from that restart. `null` while RCON is down.
+- `game_version` (in `hello`): parsed from the answer to `/version` on every RCON connect;
+  `hello` is published again when it changes.
 
 ## 2a additions (planets, research, evolution, defense)
 

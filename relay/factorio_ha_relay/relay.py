@@ -19,11 +19,17 @@ from .outputs.base import Output
 from .protocol import PROTOCOL_VERSION, ProtocolError, parse_mod_message
 from .rcon import RconError
 from .state import StateStore
+from .ups import UpsMeter
 
 _LOGGER = logging.getLogger(__name__)
 CONFIG_COMMAND = "/factorio-ha-config"
 CATEGORY_RE = re.compile(r"^[a-z_]+$")
 EMPTY_CONFIG: dict[str, Any] = {"v": PROTOCOL_VERSION, "categories": {}}
+# UPS goes into `state` at most this often, so the HA sensor (and its recorder) changes once a minute.
+UPS_UPDATE_SECONDS = 60.0
+# No heartbeat for this long: the game is not just slow, the measurement starts over.
+UPS_SILENCE_SECONDS = 60.0
+_VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
 
 
 class Rcon(Protocol):
@@ -38,6 +44,12 @@ def _compact(obj: Any) -> str:
 
 def _utcnow_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def parse_game_version(answer: str) -> str | None:
+    """The game version in the answer to /version ("2.0.72", or with a build and platform after it)."""
+    match = _VERSION_RE.search(answer or "")
+    return match.group(0) if match else None
 
 
 class Relay:
@@ -63,6 +75,13 @@ class Relay:
         self._published: dict[str, Any] | None = None
         self._tasks: set[asyncio.Task[None]] = set()
         self._started = monotonic()
+        # Server health. Never seeded from the retained state: a reboot of the host restarts the
+        # relay and the game together, and a restored start time would hide that restart.
+        self._ups_meter = UpsMeter()
+        self._ups: float | None = None
+        self._ups_at: float | None = None
+        self._server_started: str | None = None
+        self._game_version: str | None = None
 
     # --- inputs -------------------------------------------------------------
 
@@ -95,6 +114,7 @@ class Relay:
         self._store.apply(msg)
         if msg.type == "heartbeat":
             self._last_heartbeat = self._monotonic()
+            self._measure_ups(self._last_heartbeat, msg.tick)
             await self._output.publish_tick({"v": PROTOCOL_VERSION, "tick": msg.tick})
         if msg.type == "hello":
             _LOGGER.info("Mod says hello (version %s)", self._store.mod_version)
@@ -110,6 +130,9 @@ class Relay:
         await self._send_config()
 
     async def on_rcon_connected(self) -> None:
+        # Every connect follows a gap in RCON: the server (re)started, as far as the relay can tell.
+        self._server_started = self._utcnow()
+        await self._read_game_version()
         await self._send_config()
         await self.evaluate()
 
@@ -164,6 +187,11 @@ class Relay:
         )
         # Right after start RCON is not connected yet and no heartbeat has arrived, so
         # anything but "running" is not trustworthy: keep the seeded state meanwhile.
+        # A slow game (heartbeats more than 15 s apart: under ~20 UPS) keeps its measurement; a
+        # stopped server, a game paused without players or a minute without heartbeats does not.
+        if current[0] == "stopped" or current == ("paused", "no_players") or age is None or age > UPS_SILENCE_SECONDS:
+            self._ups_meter.reset()
+            self._ups = self._ups_at = None
         in_grace = self._monotonic() - self._started < self._settings.heartbeat_timeout
         if in_grace and current[0] != "running":
             pass
@@ -177,7 +205,27 @@ class Relay:
 
     def _hello(self) -> dict[str, Any]:
         return {"v": PROTOCOL_VERSION, "server_id": self._settings.server_id,
-                "relay_version": __version__, "mod_version": self._store.mod_version}
+                "relay_version": __version__, "mod_version": self._store.mod_version,
+                "game_version": self._game_version}
+
+    def _measure_ups(self, now: float, tick: int) -> None:
+        self._ups_meter.add(now, tick)
+        if self._ups_at is not None and now - self._ups_at < UPS_UPDATE_SECONDS:
+            return
+        value = self._ups_meter.value()
+        if value is not None:
+            self._ups, self._ups_at = value, now
+
+    async def _read_game_version(self) -> None:
+        try:
+            answer = await self._rcon.exec("/version")
+        except RconError as err:
+            _LOGGER.warning("Game version not read (%s)", err)
+            return
+        version = parse_game_version(answer)
+        if version is not None and version != self._game_version:
+            self._game_version = version
+            await self._output.publish_hello(self._hello())
 
     async def _publish_changes(self) -> None:
         for category, value in self._store.take_changes().items():
@@ -194,6 +242,8 @@ class Relay:
         if self._game_state is None:
             return
         state = self._store.public_state(self._game_state[0], self._game_state[1], self._since)
+        state["ups"] = self._ups
+        state["server_started"] = self._server_started if self._rcon.alive else None
         comparable = {k: v for k, v in state.items() if k != "tick"}
         if force or comparable != self._published:
             self._published = comparable
