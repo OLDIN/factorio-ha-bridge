@@ -42,9 +42,9 @@ local function new_group()
   return g
 end
 
-local function leave(state, id)
-  local m = state.machines[id]
-  if not m then return end
+-- Takes machine `id` (record `m`) out of its group's counters. The record itself stays: set
+-- updates it in place and remove drops it.
+local function leave(state, id, m)
   local loc = state.locations[m.location]
   local g = loc.groups[m.key]
   g.total = g.total - 1
@@ -54,11 +54,11 @@ local function leave(state, id)
   if m.bucket == "working" then loc.working = loc.working - 1 end
   if g.total == 0 then loc.groups[m.key] = nil end
   if loc.total == 0 then state.locations[m.location] = nil end
-  state.machines[id] = nil
 end
 
 function production.set(state, id, location, key, bucket, position)
-  leave(state, id)
+  local m = state.machines[id]
+  if m then leave(state, id, m) end
   local loc = state.locations[location]
   if not loc then
     loc = { total = 0, working = 0, groups = {} }
@@ -76,11 +76,20 @@ function production.set(state, id, location, key, bucket, position)
   if bucket == "no_input" or bucket == "output_full" or bucket == "no_power" then
     g.idle[id] = position
   end
-  state.machines[id] = { location = location, key = key, bucket = bucket }
+  -- In place: a new record per status change was garbage, and storing it put the whole map (one
+  -- entry per machine) back on the collector's list to traverse again at the end of its cycle.
+  if m then
+    m.location, m.key, m.bucket = location, key, bucket
+  else
+    state.machines[id] = { location = location, key = key, bucket = bucket }
+  end
 end
 
 function production.remove(state, id)
-  leave(state, id)
+  local m = state.machines[id]
+  if not m then return end
+  leave(state, id, m)
+  state.machines[id] = nil
 end
 
 function production.summary(state, location)
