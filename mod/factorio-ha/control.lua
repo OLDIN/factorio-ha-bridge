@@ -76,7 +76,10 @@ script.on_nth_tick(HEARTBEAT_TICKS, function()
   platforms.tick()
 end)
 
-script.on_nth_tick(CHECK_TICKS, function()
+script.on_nth_tick(CHECK_TICKS, function(e)
+  -- Every SNAPSHOT_TICKS this tick also sends the snapshot, which carries every category: the
+  -- updates would be sent again (or found unchanged) for nothing. Only UDP is skipped here.
+  if e.tick % SNAPSHOT_TICKS == 0 and config.any_enabled() then return end
   research.refresh(false)
   evolution.refresh()
   defense.refresh()
