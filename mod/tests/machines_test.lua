@@ -357,6 +357,18 @@ do
   assert(#published == 1, "machines dropped with the category")
 end
 
+-- the line rule changes in the middle of a publish: the data built with the old rule is not sent
+do
+  reset()
+  for i = 1, 30 do assembler(i <= 10 and "no_ingredients" or "working") end
+  repeat machines.scan_step() until storage.machines.ready
+  storage.config.line_output_full = true
+  steps(2)
+  for _, p in ipairs(published) do assert(p.category ~= "machines", "no machines from the old rule") end
+  steps(100)
+  assert(published[#published].category == "machines", "the next lap publishes with the new rule")
+end
+
 -- the registry tells planets where machines and drills are
 do
   reset()

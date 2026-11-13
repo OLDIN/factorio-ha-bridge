@@ -289,6 +289,8 @@ local function publish_step(m, step)
       pending = { data = build_machines(m, output_full), output_full = output_full }
     end
   elseif step == 1 then
+    -- a config with another line rule sent a fresh snapshot meanwhile: this data is outdated
+    if pending and pending.output_full ~= config.line_output_full() then pending = nil end
     if pending and config.enabled("machines") then trim_machines(pending.data, pending.output_full) end
     if config.enabled("drills") then
       transport.update_if_changed("drills", machines.collect_drills())
@@ -296,7 +298,7 @@ local function publish_step(m, step)
   elseif step == 2 then
     local p = pending
     pending = nil
-    if not (p and config.enabled("machines")) then return end
+    if not (p and config.enabled("machines") and p.output_full == config.line_output_full()) then return end
     local json = encode_machines(p.data, p.output_full)
     last_machines = { json = json, tick = game.tick, output_full = p.output_full }
     transport.update_if_changed("machines", json)
