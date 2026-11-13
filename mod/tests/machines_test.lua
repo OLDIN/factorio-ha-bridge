@@ -4,7 +4,16 @@ package.path = "factorio-ha/?.lua;" .. package.path
 local STATUS = { working = 1, no_ingredients = 2, full_output = 3, no_minable_resources = 4, no_power = 5 }
 defines = { entity_status = STATUS, target_type = { entity = 1 } }
 script = { register_on_object_destroyed = function() end }
-helpers = { table_to_json = function() return "{}" end }
+-- JSON stand-in: a label of the encoded table, so published JSON can be looked up as data
+local encoded = {}
+helpers = { table_to_json = function(t)
+  encoded[#encoded + 1] = t
+  return "json#" .. #encoded
+end }
+local function decoded(json)
+  local n = type(json) == "string" and tonumber(json:match("^json#(%d+)$"))
+  return n and encoded[n] or json
+end
 storage = {}
 
 local production = require("scripts.logic.production")
@@ -48,7 +57,7 @@ function surface.find_entities_filtered() return world end
 
 local published
 local real_update = transport.update_if_changed
-transport.update_if_changed = function(category, data) published[#published + 1] = { category = category, data = data } end
+transport.update_if_changed = function(category, data) published[#published + 1] = { category = category, data = decoded(data) } end
 local sets
 local real_set = production.set
 production.set = function(...) sets[#sets + 1] = { ... }; return real_set(...) end
@@ -251,7 +260,7 @@ do
 end
 
 -- a big base: `machines` is trimmed to one datagram with only a few encodes of the whole category
--- (each one is ~0.5 ms on a real base; a short size estimate meant one more per ~10 dropped groups)
+-- (each one is ~0.5 ms on a real base; a short size estimate means one more per missing group)
 do
   local function json(x) -- compact JSON stand-in with realistic sizes
     if type(x) == "string" then return '"' .. x .. '"' end
@@ -292,11 +301,13 @@ do
   game.get_surface = function(name) return by_name[name] end
   steps(200)
   whole = 0
-  local data = machines.collect_machines()
+  local data, out = machines.collect_machines()
+  assert(out == json(data), "the JSON that goes out is the trimmed data")
   local size = #json({ machines = data })
   assert(size <= transport.MAX_DATAGRAM - 200, "the category fits one datagram: " .. size)
   assert(size > transport.MAX_DATAGRAM - 200 - 300, "and is trimmed only as much as needed: " .. size)
-  assert(whole <= 3, "whole-category encodes: " .. whole)
+  -- once with empty group lists (small), once the result that is sent
+  assert(whole <= 2, "whole-category encodes: " .. whole)
   helpers.table_to_json = stub_json
 end
 

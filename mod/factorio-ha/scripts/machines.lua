@@ -197,7 +197,8 @@ local function summary_of(m, location, with_output_full)
 end
 
 -- nil until the registry is complete and has been scanned once: disabled, the initial fill
--- is running, or the first full lap after the fill is not done yet.
+-- is running, or the first full lap after the fill is not done yet. Also returns the data's JSON
+-- (trimming encodes it anyway), so it is sent without encoding again.
 function machines.collect_machines()
   local m = storage.machines
   if not (m and m.ready) then return nil end
@@ -217,8 +218,8 @@ function machines.collect_machines()
     end
   end
   local data = { by_planet = by_planet, by_platform = by_platform }
-  production.trim_groups(data, MAX_BYTES - MACHINES_KEY, helpers.table_to_json, with_output_full)
-  return data
+  local _, json = production.trim_groups(data, MAX_BYTES - MACHINES_KEY, helpers.table_to_json, with_output_full)
+  return data, json
 end
 
 function machines.collect_drills()
@@ -235,8 +236,8 @@ end
 
 local function publish()
   if config.enabled("machines") then
-    local data = machines.collect_machines()
-    if data then transport.update_if_changed("machines", data) end
+    local data, json = machines.collect_machines()
+    if data then transport.update_if_changed("machines", json) end
   end
   if config.enabled("drills") then
     local data = machines.collect_drills()
