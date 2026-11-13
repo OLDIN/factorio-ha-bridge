@@ -28,7 +28,7 @@ local function collect()
   if config.enabled("research") then data.research = research.snapshot() end
   if config.enabled("evolution") then data.evolution = evolution.snapshot() end
   if config.enabled("defense") then data.defense = defense.snapshot() end
-  if config.enabled("machines") then data.machines = machines.collect_machines() end
+  if config.enabled("machines") then data.machines = machines.snapshot_machines() end -- JSON
   if config.enabled("drills") then data.drills = machines.collect_drills() end
   if config.enabled("platforms") then data.platforms = platforms.collect() end
   return data
@@ -56,8 +56,12 @@ end
 
 script.on_init(function()
   config.init()
+  planets.warm()
   send_hello("init")
 end)
+
+-- Only prototype-derived lookups, never `storage`.
+script.on_load(planets.warm)
 
 script.on_configuration_changed(function()
   config.init()
@@ -72,7 +76,10 @@ script.on_nth_tick(HEARTBEAT_TICKS, function()
   platforms.tick()
 end)
 
-script.on_nth_tick(CHECK_TICKS, function()
+script.on_nth_tick(CHECK_TICKS, function(e)
+  -- Every SNAPSHOT_TICKS this tick also sends the snapshot, which carries every category: the
+  -- updates would be sent again (or found unchanged) for nothing. Only UDP is skipped here.
+  if e.tick % SNAPSHOT_TICKS == 0 and config.any_enabled() then return end
   research.refresh(false)
   evolution.refresh()
   defense.refresh()

@@ -30,6 +30,11 @@ local UNKNOWN_RESOURCE = "unknown"
 local TYPE_SET = {}
 for _, t in ipairs(machines.TYPES) do TYPE_SET[t] = true end
 
+-- The last published `machines` JSON: {json, tick, output_full}. Session-local on purpose: it only
+-- decides what the server sends over UDP, never game state, so it cannot desync. The 60 s
+-- snapshot reuses it instead of collecting and trimming everything again.
+local last_machines
+
 -- Storage layout (plain data, created lazily so old saves work):
 -- storage.machines = {
 --   reg = scanner registry of {id, entity, planet, drill, resource,
@@ -196,12 +201,8 @@ local function summary_of(m, location, with_output_full)
            groups = production.groups(m.machines, location, MIN_SHARE, MAX_GROUPS, MAX_POSITIONS, with_output_full) }
 end
 
--- nil until the registry is complete and has been scanned once: disabled, the initial fill
--- is running, or the first full lap after the fill is not done yet.
-function machines.collect_machines()
-  local m = storage.machines
-  if not (m and m.ready) then return nil end
-  local with_output_full = config.line_output_full()
+-- `machines` of every location with its groups, before the trim (the registry must be ready).
+local function build_machines(m, with_output_full)
   local by_planet, by_platform = {}, {}
   for _, planet in ipairs(sorted_locations(m.machines, false)) do
     by_planet[planet] = summary_of(m, planet, with_output_full)
@@ -216,9 +217,50 @@ function machines.collect_machines()
       by_platform[tostring(index)] = entry
     end
   end
-  local data = { by_planet = by_planet, by_platform = by_platform }
+  return { by_planet = by_planet, by_platform = by_platform }
+end
+
+-- Trimming to one datagram (no encode of the whole), then the one encode of the result.
+local function trim_machines(data, with_output_full)
   production.trim_groups(data, MAX_BYTES - MACHINES_KEY, helpers.table_to_json, with_output_full)
-  return data
+end
+
+local function encode_machines(data, with_output_full)
+  return production.encode_trimmed(data, MAX_BYTES - MACHINES_KEY, helpers.table_to_json, with_output_full)
+end
+
+-- nil until the registry is complete and has been scanned once: disabled, the initial fill
+-- is running, or the first full lap after the fill is not done yet. Also returns the data's JSON,
+-- so it is sent without encoding again.
+function machines.collect_machines()
+  local m = storage.machines
+  if not (m and m.ready) then return nil end
+  local with_output_full = config.line_output_full()
+  local data = build_machines(m, with_output_full)
+  trim_machines(data, with_output_full)
+  return data, encode_machines(data, with_output_full)
+end
+
+-- `machines` for the snapshot, as JSON: the last publish while it is at most a lap old and was
+-- made with the current line rule (a config change sends a snapshot right away), else collected
+-- now. nil when not ready, like collect_machines.
+function machines.snapshot_machines()
+  local m = storage.machines
+  if not (m and m.ready) then return nil end
+  local c = last_machines
+  if c and game.tick - c.tick <= machines.SCAN_TICKS * machines.LAP_STEPS
+    and c.output_full == config.line_output_full() then
+    return c.json
+  end
+  local _, json = machines.collect_machines()
+  return json
+end
+
+-- Whether the registry holds a counted machine or drill on `location` (a planet name): proof of
+-- player buildings there without searching the surface.
+function machines.has_location(location)
+  local m = storage.machines
+  return m ~= nil and (m.machines.locations[location] ~= nil or m.drills.locations[location] ~= nil)
 end
 
 function machines.collect_drills()
@@ -233,21 +275,40 @@ function machines.collect_drills()
   return { by_planet = by_planet }
 end
 
-local function publish()
-  if config.enabled("machines") then
-    local data = machines.collect_machines()
-    if data then transport.update_if_changed("machines", data) end
-  end
-  if config.enabled("drills") then
-    local data = machines.collect_drills()
-    if data then transport.update_if_changed("drills", data) end
+-- A publish is spread over the scanner steps that follow the end of a lap (step 0), so no
+-- step carries all of it: 0 builds the `machines` groups, 1 trims them and sends `drills`, 2
+-- encodes and sends `machines`. The data waits in `pending`, session-local on purpose: it only
+-- feeds the server's UDP (a peer that loads in between skips one publish), never game state.
+local pending -- {data, output_full}
+
+local function publish_step(m, step)
+  if step == 0 then
+    pending = nil
+    if config.enabled("machines") then
+      local output_full = config.line_output_full()
+      pending = { data = build_machines(m, output_full), output_full = output_full }
+    end
+  elseif step == 1 then
+    -- a config with another line rule sent a fresh snapshot meanwhile: this data is outdated
+    if pending and pending.output_full ~= config.line_output_full() then pending = nil end
+    if pending and config.enabled("machines") then trim_machines(pending.data, pending.output_full) end
+    if config.enabled("drills") then
+      transport.update_if_changed("drills", machines.collect_drills())
+    end
+  elseif step == 2 then
+    local p = pending
+    pending = nil
+    if not (p and config.enabled("machines") and p.output_full == config.line_output_full()) then return end
+    local json = encode_machines(p.data, p.output_full)
+    last_machines = { json = json, tick = game.tick, output_full = p.output_full }
+    transport.update_if_changed("machines", json)
   end
 end
 
 -- Called every SCAN_TICKS ticks.
 function machines.scan_step()
   if not config.enabled("machines") and not config.enabled("drills") then
-    storage.machines = nil -- stop scanning, drop the registry and the state
+    storage.machines, pending = nil, nil -- stop scanning, drop the registry and the state
     return
   end
   local m = state()
@@ -268,15 +329,13 @@ function machines.scan_step()
   if not m.ready then
     if m.reg.cursor > #m.reg.ids then -- the first full lap is complete
       m.ready, m.steps = true, 0
-      publish()
+      publish_step(m, 0)
     end
     return
   end
   m.steps = m.steps + 1
-  if m.steps >= machines.LAP_STEPS then
-    m.steps = 0
-    publish()
-  end
+  if m.steps >= machines.LAP_STEPS then m.steps = 0 end
+  publish_step(m, m.steps)
 end
 
 -- After a mod or game update: drop the registry, so the next steps refill it from every surface

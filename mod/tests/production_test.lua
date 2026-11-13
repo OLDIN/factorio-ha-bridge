@@ -177,29 +177,74 @@ do
   assert(biggest < 8000, "per-planet payload " .. biggest .. " bytes")
 end
 
+-- Compact JSON like helpers.table_to_json writes (keys sorted here; an empty table is []).
+local function json(x)
+  if type(x) == "string" then return '"' .. x .. '"' end
+  if type(x) == "number" then return string.format("%d", x) end
+  if type(x) ~= "table" then return tostring(x) end
+  if #x > 0 or next(x) == nil then
+    local items = {}
+    for i, v in ipairs(x) do items[i] = json(v) end
+    return "[" .. table.concat(items, ",") .. "]"
+  end
+  local keys = {}
+  for k in pairs(x) do keys[#keys + 1] = k end
+  table.sort(keys)
+  local out = {}
+  for i, k in ipairs(keys) do out[i] = '"' .. k .. '":' .. json(x[k]) end
+  return "{" .. table.concat(out, ",") .. "}"
+end
+
+local function grp(name, total, idle, output_full)
+  output_full = output_full or 0
+  return { recipe = name, total = total, working = total - idle - output_full, no_input = idle,
+           output_full = output_full, no_power = 0, at = {} }
+end
+
+-- The previous algorithm, one group at a time with a full encode after each drop: the oracle.
+local function naive(data, max_bytes, with_output_full)
+  local list = {}
+  for _, section in ipairs({ "by_planet", "by_platform" }) do
+    for place, entry in pairs(data[section] or {}) do
+      for _, g in ipairs(entry.groups) do
+        local idle = g.no_input + g.no_power + (with_output_full and g.output_full or 0)
+        list[#list + 1] = { section = section, planet = place, group = g, share = idle / g.total }
+      end
+    end
+  end
+  table.sort(list, function(a, b)
+    if a.share ~= b.share then return a.share < b.share end
+    if a.group.total ~= b.group.total then return a.group.total < b.group.total end
+    if a.section ~= b.section then return a.section < b.section end
+    if a.planet ~= b.planet then return a.planet < b.planet end
+    return a.group.recipe < b.group.recipe
+  end)
+  local dropped = 0
+  if #json(data) <= max_bytes then return 0 end
+  for _, item in ipairs(list) do
+    local groups = data[item.section][item.planet].groups
+    for i, g in ipairs(groups) do
+      if g == item.group then table.remove(groups, i); break end
+    end
+    dropped = dropped + 1
+    if #json(data) <= max_bytes then break end
+  end
+  return dropped
+end
+
+-- json_size is the exact length of the encoding (what the trim estimate rests on)
+do
+  local samples = {
+    grp("iron-gear-wheel", 10, 3), grp("x", 1, 1), {}, { 1, -22, 333 }, { a = {}, bb = { { -1, 2 } } },
+    { recipe = "r", total = 1234567, at = { { -123456, 98765 }, { 0, -1 }, { 7, 8 } } },
+  }
+  for i, v in ipairs(samples) do
+    assert(production.json_size(v) == #json(v), "sample " .. i .. ": " .. production.json_size(v) .. " vs " .. #json(v))
+  end
+end
+
 -- trim_groups: drop the groups with the smallest stopped share until the encoding fits
 do
-  local function encode(v)  -- tiny deterministic stand-in for helpers.table_to_json
-    local function enc(x)
-      if type(x) ~= "table" then return tostring(x) end
-      if #x > 0 then  -- JSON-like array: elements joined by commas, no keys
-        local items = {}
-        for i, v in ipairs(x) do items[i] = enc(v) end
-        return "[" .. table.concat(items, ",") .. "]"
-      end
-      local keys = {}
-      for k in pairs(x) do keys[#keys + 1] = k end
-      table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
-      local out = {}
-      for _, k in ipairs(keys) do out[#out + 1] = tostring(k) .. "=" .. enc(x[k]) end
-      return "{" .. table.concat(out, ",") .. "}"
-    end
-    return enc(v)
-  end
-  local function grp(name, total, idle)
-    return { recipe = name, total = total, working = total - idle, no_input = idle,
-             output_full = 0, no_power = 0, at = {} }
-  end
   local function build()
     return { by_planet = {
       nauvis = { total = 100, working = 50, groups = { grp("a", 10, 9), grp("b", 10, 2), grp("c", 10, 5) } },
@@ -207,90 +252,78 @@ do
     } }
   end
   local full = build()
-  local size = #encode(full)
-  assert(production.trim_groups(full, size, encode) == 0, "fits: nothing dropped")
+  local size = #json(full)
+  assert(production.trim_groups(full, size, json) == 0, "fits: nothing dropped")
+  assert(production.encode_trimmed(full, size, json) == json(full), "and encoded as it is")
   assert(#full.by_planet.nauvis.groups == 3)
 
   local d = build()
-  local dropped = production.trim_groups(d, size - 1, encode)
+  local dropped = production.trim_groups(d, size - 1, json)
   assert(dropped == 1, dropped)
   assert(#d.by_planet.nauvis.groups == 2 and d.by_planet.nauvis.groups[1].recipe == "a"
     and d.by_planet.nauvis.groups[2].recipe == "c", "b (share 0.2) is the smallest")
   assert(#d.by_planet.gleba.groups == 2)
 
   d = build()
-  assert(production.trim_groups(d, 1, encode) == 5, "impossible limit: all groups go, then stop")
+  assert(production.trim_groups(d, 1, json) == 5, "impossible limit: all groups go, then stop")
   assert(#d.by_planet.nauvis.groups == 0 and #d.by_planet.gleba.groups == 0)
   assert(d.by_planet.nauvis.total == 100, "totals stay")
 
-  d = build()  -- two drops: b (0.2) then d (0.3)
-  local limit = #encode(d) - 1
-  local e = build()
-  production.trim_groups(e, limit, encode)
-  local after_one = #encode(e)
-  production.trim_groups(d, after_one - 1, encode)
-  assert(#d.by_planet.nauvis.groups == 2 and #d.by_planet.gleba.groups == 1
-    and d.by_planet.gleba.groups[1].recipe == "e")
-  -- large input: same result as dropping one group at a time, with only a few encodes
-  do
-    local function big()
-      local by_planet = {}
-      for pi = 1, 10 do
-        local groups = {}
-        for gi = 1, 20 do
-          groups[gi] = grp("r" .. pi .. "_" .. gi, 10 + gi, (gi * 7 + pi) % (10 + gi) + 1)
-          groups[gi].at = { { gi, pi }, { gi, pi + 1 } }
+  -- a planet that loses its last group: "[g]" -> "[]", one comma less than elsewhere
+  d = build()
+  local want = build()
+  local limit = #json(want) - #json(grp("b", 10, 2)) - #json(grp("d", 10, 3)) - #json(grp("c", 10, 5)) - 3
+  assert(production.trim_groups(d, limit, json) == naive(want, limit))
+  assert(json(d) == json(want))
+end
+
+-- a big base: the same groups as the oracle, with the category encoded at most twice
+-- (once with empty group lists, once the result)
+do
+  local function big(platforms)
+    local s = production.new()
+    local id = 0
+    local data = { by_planet = {}, by_platform = {} }
+    for pi = 1, 8 + platforms do
+      local location = pi <= 8 and ("planet-" .. pi) or ("@" .. pi)
+      for r = 1, 20 do
+        for j = 1, 10 + r do
+          id = id + 1
+          local bucket = (j * 7 + pi + r) % 5 == 0 and "no_input" or (j % 9 == 0 and "output_full" or "working")
+          production.set(s, id, location, "recipe-number-" .. r, bucket, { -50000 + id * 37, 1200 - id })
         end
-        by_planet["p" .. pi] = { total = 500, working = 100, groups = groups }
       end
-      return { by_planet = by_planet }
+      local sm = production.summary(s, location)
+      local entry = { total = sm.total, working = sm.working, groups = production.groups(s, location, 0.1, 20, 3, false) }
+      if pi <= 8 then data.by_planet[location] = entry
+      else entry.name = "Platform " .. pi; data.by_platform[tostring(pi)] = entry end
     end
-    local function naive(data, max_bytes)  -- the previous one-by-one algorithm
-      local list = {}
-      for planet, entry in pairs(data.by_planet) do
-        for _, g in ipairs(entry.groups) do
-          list[#list + 1] = { planet = planet, group = g, share = (g.no_input + g.output_full + g.no_power) / g.total }
-        end
-      end
-      table.sort(list, function(a, b)
-        if a.share ~= b.share then return a.share < b.share end
-        if a.group.total ~= b.group.total then return a.group.total < b.group.total end
-        if a.planet ~= b.planet then return a.planet < b.planet end
-        return a.group.recipe < b.group.recipe
-      end)
-      local dropped = 0
-      if #encode(data) <= max_bytes then return 0 end
-      for _, item in ipairs(list) do
-        local groups = data.by_planet[item.planet].groups
-        for i, g in ipairs(groups) do
-          if g == item.group then table.remove(groups, i); break end
-        end
-        dropped = dropped + 1
-        if #encode(data) <= max_bytes then break end
-      end
-      return dropped
-    end
-    local total = #encode(big())
-    for _, limit in ipairs({ total, total - 1, math.floor(total * 3 / 4), math.floor(total / 2), math.floor(total / 10), 1 }) do
-      local want, got = big(), big()
+    return data
+  end
+  for _, platforms in ipairs({ 0, 3 }) do
+    local total = #json(big(platforms))
+    for _, limit in ipairs({ total, total - 1, math.floor(total * 3 / 4), math.floor(total / 2), 7787, math.floor(total / 10), 1 }) do
+      local want, got = big(platforms), big(platforms)
       local n_want = naive(want, limit)
-      local calls = 0
-      local n_got = production.trim_groups(got, limit, function(v) calls = calls + 1; return encode(v) end)
+      local whole = 0
+      local function counted(v)
+        whole = whole + 1
+        return json(v)
+      end
+      local n_got = production.trim_groups(got, limit, counted)
       assert(n_got == n_want, "limit " .. limit .. ": dropped " .. n_got .. " want " .. n_want)
-      assert(encode(got) == encode(want), "limit " .. limit .. ": same remaining groups")
-      -- 1 initial + per-group sizes (<= 200) + a few verifications
-      assert(calls <= 200 + 5, "limit " .. limit .. ": " .. calls .. " encodes")
+      assert(json(got) == json(want), "limit " .. limit .. ": same remaining groups")
+      local out = production.encode_trimmed(got, limit, counted)
+      assert(out == json(want), "limit " .. limit .. ": the encoding is the result")
+      assert(whole <= 2, "limit " .. limit .. ": whole-category encodes " .. whole)
+      -- a short estimate is caught by encode_trimmed: dropping goes on in the same order
+      local short, oracle = big(platforms), big(platforms)
+      naive(oracle, limit)
+      assert(production.encode_trimmed(short, limit, json) == json(oracle), "limit " .. limit .. ": fallback")
     end
-    -- encodes of the whole category stay constant (group sizes are measured on single groups)
-    local whole = 0
-    local data = big()
-    production.trim_groups(data, math.floor(total / 2), function(v)
-      if v.by_planet then whole = whole + 1 end
-      return encode(v)
-    end)
-    assert(whole <= 4, "whole-category encodes: " .. whole)
   end
 end
+
 
 -- "output full" is not "stopped" unless the line rule says so (saturated malls and buffers)
 do
@@ -314,49 +347,26 @@ end
 
 -- trimming drops the least stopped first by the same rule
 do
-  local function grp(recipe, total, no_input, output_full)
-    return { recipe = recipe, total = total, working = total - no_input - output_full,
-             no_input = no_input, output_full = output_full, no_power = 0, at = {} }
-  end
   local function data()
     return { by_planet = { nauvis = { total = 30, working = 10, groups = {
       grp("full-mall", 10, 0, 10), grp("starving", 10, 5, 0), grp("half", 10, 2, 0) } } } }
   end
-  -- 100 bytes per group in the whole category, 99 per group alone (+1 for the comma)
-  local function size(d)
-    return string.rep("x", d.by_planet and #d.by_planet.nauvis.groups * 100 or 99)
+  local function only(i)
+    local d = data()
+    d.by_planet.nauvis.groups = { d.by_planet.nauvis.groups[i] }
+    return #json(d)
   end
+  local limit = math.max(only(1), only(2)) -- room for one group, whichever is kept
   local d = data()
-  production.trim_groups(d, 100, size, false)
+  production.trim_groups(d, limit, json, false)
   assert(#d.by_planet.nauvis.groups == 1 and d.by_planet.nauvis.groups[1].recipe == "starving", "without the flag a full group is dropped first")
   d = data()
-  production.trim_groups(d, 100, size, true)
+  production.trim_groups(d, limit, json, true)
   assert(d.by_planet.nauvis.groups[1].recipe == "full-mall", "with the flag the full group is the most stopped")
 end
 
-
 -- 2c: trim_groups drops from by_platform too, by the same smallest-stopped-share rule
 do
-  local function encode(v)
-    local function enc(x)
-      if type(x) ~= "table" then return tostring(x) end
-      if #x > 0 then
-        local items = {}
-        for i, v in ipairs(x) do items[i] = enc(v) end
-        return "[" .. table.concat(items, ",") .. "]"
-      end
-      local keys = {}
-      for k in pairs(x) do keys[#keys + 1] = k end
-      table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
-      local out = {}
-      for _, k in ipairs(keys) do out[#out + 1] = tostring(k) .. "=" .. enc(x[k]) end
-      return "{" .. table.concat(out, ",") .. "}"
-    end
-    return enc(v)
-  end
-  local function grp(name, total, idle)
-    return { recipe = name, total = total, working = total - idle, no_input = idle, output_full = 0, no_power = 0, at = {} }
-  end
   local function build()
     return {
       by_planet = { nauvis = { total = 100, working = 50, groups = { grp("a", 10, 9), grp("b", 10, 5) } } },
@@ -364,16 +374,16 @@ do
     }
   end
   local d = build()
-  local size = #encode(d)
-  assert(production.trim_groups(d, size - 1, encode) == 1)
+  local size = #json(d)
+  assert(production.trim_groups(d, size - 1, json) == 1)
   assert(#d.by_platform["3"].groups == 1 and d.by_platform["3"].groups[1].recipe == "q", "p (0.2) goes first, from a platform")
   assert(#d.by_planet.nauvis.groups == 2)
   d = build()
-  assert(production.trim_groups(d, 1, encode) == 4)
+  assert(production.trim_groups(d, 1, json) == 4)
   assert(#d.by_platform["3"].groups == 0 and d.by_platform["3"].name == "Hauler 2" and d.by_platform["3"].total == 40)
   -- no by_platform at all (older data shape) still works
   d = build(); d.by_platform = nil
-  assert(production.trim_groups(d, 1, encode) == 2)
+  assert(production.trim_groups(d, 1, json) == 2)
 end
 
 print("production_test ok")

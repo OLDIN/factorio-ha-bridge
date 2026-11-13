@@ -2,6 +2,7 @@
 
 local transport = require("scripts.transport")
 local config = require("scripts.config")
+local machines = require("scripts.machines")
 local bodies = require("scripts.logic.bodies")
 
 local planets = {}
@@ -12,7 +13,8 @@ local function round4(v)
   return math.floor(v * 10000 + 0.5) / 10000
 end
 
--- Prototype-derived data never changes within a session; computed lazily, session-local.
+-- Prototype-derived data never changes within a session; session-local. Built by warm() when
+-- the game loads (it walks every technology: ~2 ms on Space Age, too much for a tick), or lazily.
 local static -- list of {name, kind, x, y, distance, orientation, magnitude, parent, unlocked_by}
 
 local function build_static()
@@ -63,13 +65,21 @@ end
 -- "built" until the next session.
 local built_surfaces = {}
 
+-- A machine or drill in the registry proves buildings for free; the search is the fallback
+-- (the `machines`/`drills` categories off, or a planet with neither).
 local function has_buildings(name)
   local surface = game.get_surface(name)
   if not surface then return false end
   if built_surfaces[surface.index] then return true end
-  local built = surface.count_entities_filtered({ force = "player", limit = 1 }) > 0
+  local built = machines.has_location(name)
+    or surface.count_entities_filtered({ force = "player", limit = 1 }) > 0
   if built then built_surfaces[surface.index] = true end
   return built
+end
+
+-- on_init / on_load: `prototypes` is readable there and the result is the same on every peer.
+function planets.warm()
+  static = static or build_static()
 end
 
 function planets.collect()

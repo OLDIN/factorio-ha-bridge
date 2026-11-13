@@ -84,4 +84,80 @@ do
   for i = 91, 100 do assert(seen[i] == 1) end
 end
 
+-- random churn between batches: every item live for a whole lap is visited exactly once in it,
+-- an item added during a lap at most once, a removed item never again; no holes are left
+do
+  math.randomseed(20261113)
+  local reg = scanner.new()
+  local live, ids, next_id = {}, {}, 0
+  local function add()
+    next_id = next_id + 1
+    scanner.add(reg, next_id, { id = next_id })
+    live[next_id] = true
+    ids[#ids + 1] = next_id
+  end
+  local function remove_random()
+    if #ids == 0 then return end
+    local i = math.random(#ids)
+    local id = ids[i]
+    ids[i] = ids[#ids]
+    ids[#ids] = nil
+    live[id] = nil
+    assert(scanner.remove(reg, id).id == id)
+  end
+  for _ = 1, 300 do add() end
+  local laps = 0
+  while laps < 40 do
+    -- a lap starts when the cursor is past the end
+    assert(reg.cursor > #reg.ids or laps == 0)
+    local at_start, removed, seen = {}, {}, {}
+    for id in pairs(live) do at_start[id] = true end
+    repeat
+      for _, item in ipairs(scanner.next_batch(reg, math.random(1, 25))) do
+        assert(live[item.id], "a removed item came back: " .. item.id)
+        seen[item.id] = (seen[item.id] or 0) + 1
+        assert(seen[item.id] == 1, "visited twice in a lap: " .. item.id)
+      end
+      -- churn in the middle of the lap (an add after its end would extend it, by design)
+      if reg.cursor <= #reg.ids then
+        for _ = 1, math.random(0, 4) do
+          local r = math.random()
+          if r < 0.45 then
+            local before = {}
+            for id in pairs(live) do before[id] = true end
+            remove_random()
+            for id in pairs(before) do if not live[id] then removed[id] = true end end
+          elseif r < 0.8 then
+            add()
+          end
+        end
+      end
+      assert(#reg.ids == scanner.count(reg) and reg.dead == 0, "no holes")
+    until reg.cursor > #reg.ids
+    for id in pairs(at_start) do
+      if not removed[id] then assert(seen[id] == 1, "lap " .. laps .. ": item " .. id .. " skipped") end
+    end
+    laps = laps + 1
+  end
+end
+
+-- a registry saved by an older version (false holes) is compacted once, mid-lap position kept
+do
+  local reg = { ids = { 1, false, 3, false, 5, 6 }, pos = { [1] = 1, [3] = 3, [5] = 5, [6] = 6 },
+                items = { [1] = { id = 1 }, [3] = { id = 3 }, [5] = { id = 5 }, [6] = { id = 6 } },
+                cursor = 4, count = 4, dead = 2 } -- 1 and 3 visited, 5 and 6 not
+  local got = {}
+  for _, item in ipairs(scanner.next_batch(reg, 10)) do got[#got + 1] = item.id end
+  assert(table.concat(got, ",") == "5,6", table.concat(got, ","))
+  assert(reg.dead == 0 and #reg.ids == 4)
+  got = {}
+  for _, item in ipairs(scanner.next_batch(reg, 10)) do got[#got + 1] = item.id end
+  assert(table.concat(got, ",") == "1,3,5,6", "the next lap has everything")
+  -- removal from an old registry compacts first as well
+  reg = { ids = { 1, false, 3 }, pos = { [1] = 1, [3] = 3 }, items = { [1] = {}, [3] = {} },
+          cursor = 2, count = 2, dead = 1 }
+  scanner.remove(reg, 1)
+  assert(#reg.ids == 1 and reg.ids[1] == 3 and reg.cursor == 1 and reg.pos[3] == 1)
+end
+
 print("scanner_test ok")
