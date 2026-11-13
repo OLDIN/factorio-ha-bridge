@@ -1,3 +1,3 @@
 """factorio-ha relay: mod UDP -> MQTT, HA config -> RCON."""
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
