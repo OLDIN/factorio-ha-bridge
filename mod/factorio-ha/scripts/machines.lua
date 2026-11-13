@@ -20,6 +20,11 @@ local MIN_SHARE = 0.1        -- a group is sent when >= 10% of its machines stan
 local MAX_GROUPS = 20        -- per planet
 local MAX_POSITIONS = 3
 local MAX_BYTES = transport.MAX_DATAGRAM - 200 -- the `machines` category must fit one datagram
+-- The category goes out as {"machines":...}. trim_groups adds up plain encodings (a group's own
+-- JSON is its share of the whole), so the key comes off the budget instead of wrapping every
+-- measurement: wrapped, each dropped group was overestimated by these bytes, the estimate fell
+-- short by a group every ~10 drops, and each shortfall cost one more encode of the whole category.
+local MACHINES_KEY = #'{"machines":}'
 local UNKNOWN_RESOURCE = "unknown"
 
 local TYPE_SET = {}
@@ -212,7 +217,7 @@ function machines.collect_machines()
     end
   end
   local data = { by_planet = by_planet, by_platform = by_platform }
-  production.trim_groups(data, MAX_BYTES, function(d) return helpers.table_to_json({ machines = d }) end, with_output_full)
+  production.trim_groups(data, MAX_BYTES - MACHINES_KEY, helpers.table_to_json, with_output_full)
   return data
 end
 
