@@ -177,8 +177,11 @@ local function json_size(v)
   local t = type(v)
   if t == "string" then return #v + 2 end
   if t == "number" then
-    if v == math.floor(v) then return #string.format("%d", v) end
-    return #tostring(v)
+    if v ~= math.floor(v) then return #tostring(v) end
+    local len, limit = 1, 10 -- digits of an integer, without building its string
+    if v < 0 then len, v = 2, -v end
+    while v >= limit do len, limit = len + 1, limit * 10 end
+    return len
   end
   if t == "boolean" then return v and 4 or 5 end
   local n = #v
@@ -193,25 +196,46 @@ local function json_size(v)
 end
 production.json_size = json_size
 
--- Trims `data` ({by_planet = {planet = {groups = {...}}}}, as sent in `machines`) so that
--- encode(data) is at most max_bytes: drops groups one at a time, smallest stopped share first
--- (across all planets; ties: fewer machines, then planet and recipe name). Totals stay.
--- Returns the number of dropped groups and encode(data) of the result, ready to send.
--- Nothing big is encoded to measure: the category with empty group lists is encoded (small) and
--- the groups are measured with json_size, which gives the exact size of the whole. Dropping walks
--- that estimate down; the result is encoded once, and one more group is dropped (and encoded
--- again) only if that encoding still does not fit.
-function production.trim_groups(data, max_bytes, encode, with_output_full)
+-- Groups of `data` as candidates for dropping, in no particular order.
+local function droppable(data, with_output_full)
   local list, entries = {}, {}
   for _, section in ipairs({ "by_planet", "by_platform" }) do -- 2c: platforms share the budget
     for place, entry in pairs(data[section] or {}) do
       entries[#entries + 1] = entry
       for _, g in ipairs(entry.groups) do
         list[#list + 1] = { section = section, planet = place, group = g, entry = entry,
-                            share = idle_count(g, with_output_full) / g.total, size = json_size(g) }
+                            share = idle_count(g, with_output_full) / g.total }
       end
     end
   end
+  return list, entries
+end
+
+-- The drop order: smallest stopped share first (across all planets; ties: fewer machines, then
+-- planet and recipe name).
+local function drops_before(a, b)
+  if a.share ~= b.share then return a.share < b.share end
+  if a.group.total ~= b.group.total then return a.group.total < b.group.total end
+  if a.section ~= b.section then return a.section < b.section end
+  if a.planet ~= b.planet then return a.planet < b.planet end
+  return a.group.recipe < b.group.recipe
+end
+
+local function remove_group(item)
+  local groups = item.entry.groups
+  for i, g in ipairs(groups) do
+    if g == item.group then table.remove(groups, i); return end
+  end
+end
+
+-- Trims `data` ({by_planet = {planet = {groups = {...}}}}, as sent in `machines`) so that
+-- encode(data) is at most max_bytes: drops groups one at a time in the drop order. Totals stay.
+-- Returns the number of dropped groups. Nothing big is encoded: the category with empty group
+-- lists is encoded (small) and the groups are measured with json_size, which together give the
+-- exact size of the whole; dropping walks that estimate down. encode_trimmed then encodes the
+-- result (and drops more only if the estimate was short).
+function production.trim_groups(data, max_bytes, encode, with_output_full)
+  local list, entries = droppable(data, with_output_full)
   local saved, left = {}, {}
   for i, entry in ipairs(entries) do saved[i], entry.groups = entry.groups, {} end
   local estimate = #encode(data) -- every "groups":[] counted already
@@ -221,49 +245,39 @@ function production.trim_groups(data, max_bytes, encode, with_output_full)
     left[entry] = k
     if k > 1 then estimate = estimate + k - 1 end -- commas between the groups
   end
-  for _, item in ipairs(list) do estimate = estimate + item.size end
-
-  local sorted = false
-  local function sort()
-    if sorted then return end
-    sorted = true
-    table.sort(list, function(a, b)
-      if a.share ~= b.share then return a.share < b.share end
-      if a.group.total ~= b.group.total then return a.group.total < b.group.total end
-      if a.section ~= b.section then return a.section < b.section end
-      if a.planet ~= b.planet then return a.planet < b.planet end
-      return a.group.recipe < b.group.recipe
-    end)
+  for _, item in ipairs(list) do
+    item.size = json_size(item.group)
+    estimate = estimate + item.size
   end
+  if estimate <= max_bytes then return 0 end
+  table.sort(list, drops_before)
   local drops = 0
-  if estimate > max_bytes then
-    sort()
-    while drops < #list and estimate > max_bytes do
-      drops = drops + 1
-      local item = list[drops]
-      left[item.entry] = left[item.entry] - 1
-      estimate = estimate - item.size - (left[item.entry] > 0 and 1 or 0)
-    end
+  while drops < #list and estimate > max_bytes do
+    drops = drops + 1
+    local item = list[drops]
+    left[item.entry] = left[item.entry] - 1
+    estimate = estimate - item.size - (left[item.entry] > 0 and 1 or 0)
+    remove_group(item)
   end
-  local dropped = 0
-  local function drop_to(n)
-    while dropped < n do
-      dropped = dropped + 1
-      local item = list[dropped]
-      local groups = item.entry.groups
-      for i, g in ipairs(groups) do
-        if g == item.group then table.remove(groups, i); break end
-      end
-    end
-  end
-  drop_to(drops)
+  return drops
+end
+
+-- encode(data) of trimmed data. If it is still over max_bytes (a short estimate), drops the next
+-- group in the drop order and encodes again until it fits: the same result as dropping one group
+-- at a time from the start.
+function production.encode_trimmed(data, max_bytes, encode, with_output_full)
   local json = encode(data)
-  while dropped < #list and #json > max_bytes do -- the estimate was short
-    sort()
-    drop_to(dropped + 1)
+  while #json > max_bytes do
+    local list = droppable(data, with_output_full)
+    if #list == 0 then break end
+    local first = list[1]
+    for i = 2, #list do
+      if drops_before(list[i], first) then first = list[i] end
+    end
+    remove_group(first)
     json = encode(data)
   end
-  return dropped, json
+  return json
 end
 
 return production

@@ -78,21 +78,28 @@ do
   local first
   for i = 1, 200 do
     machines.scan_step()
-    if #published > 0 then first = i; break end
-    assert(machines.collect_machines() == nil and machines.collect_drills() == nil,
+    if storage.machines.ready then first = i; break end
+    assert(#published == 0 and machines.collect_machines() == nil and machines.collect_drills() == nil,
       "no data before the first full lap (step " .. i .. ")")
   end
-  assert(first, "published after the first lap")
+  assert(first, "ready after the first lap")
   assert(first > 3, "not right after the fill: step " .. first)
+  assert(#published == 0, "the publish starts with building the groups")
+  machines.scan_step()
   local m = machines.collect_machines()
   assert(m and m.by_planet.nauvis.total == 450, "machines total: " .. tostring(m and m.by_planet.nauvis.total))
   assert(m.by_planet.nauvis.working == 300, "working")
   local d = machines.collect_drills()
   assert(d.by_planet.nauvis.total == 50 and d.by_planet.nauvis.by_resource["iron-ore"].working == 50)
+  -- a publish spans three steps: groups built, then trimmed with drills sent, then machines sent
+  assert(#published == 1 and published[1].category == "drills", "drills first")
+  machines.scan_step()
   local by_cat = {}
   for _, p in ipairs(published) do by_cat[p.category] = p.data end
   assert(by_cat.machines.by_planet.nauvis.total == 450, "first publish is complete")
   assert(by_cat.drills.by_planet.nauvis.total == 50, "first drills publish is complete")
+  machines.scan_step()
+  assert(#published == 2, "one publish per lap")
 end
 
 -- I2: only enabled categories are published ------------------------------------------------
@@ -336,6 +343,18 @@ do
   json = machines.snapshot_machines()
   assert(#encoded > encodes and decoded(json).by_planet.nauvis, "another line rule: collected again")
   game.tick = 0
+end
+
+-- `machines` turned off between the two halves of a publish: nothing is sent for it
+do
+  reset()
+  for _ = 1, 30 do assembler("working") end
+  for _ = 1, 5 do drill("working") end
+  repeat machines.scan_step() until #published > 0
+  assert(published[1].category == "drills")
+  storage.config.categories = { drills = true }
+  steps(1)
+  assert(#published == 1, "machines dropped with the category")
 end
 
 -- the registry tells planets where machines and drills are

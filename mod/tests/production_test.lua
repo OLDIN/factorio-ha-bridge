@@ -253,8 +253,8 @@ do
   end
   local full = build()
   local size = #json(full)
-  local n, out = production.trim_groups(full, size, json)
-  assert(n == 0 and out == json(full), "fits: nothing dropped, the encoding is returned")
+  assert(production.trim_groups(full, size, json) == 0, "fits: nothing dropped")
+  assert(production.encode_trimmed(full, size, json) == json(full), "and encoded as it is")
   assert(#full.by_planet.nauvis.groups == 3)
 
   local d = build()
@@ -306,14 +306,20 @@ do
       local want, got = big(platforms), big(platforms)
       local n_want = naive(want, limit)
       local whole = 0
-      local n_got, out = production.trim_groups(got, limit, function(v)
+      local function counted(v)
         whole = whole + 1
         return json(v)
-      end)
+      end
+      local n_got = production.trim_groups(got, limit, counted)
       assert(n_got == n_want, "limit " .. limit .. ": dropped " .. n_got .. " want " .. n_want)
       assert(json(got) == json(want), "limit " .. limit .. ": same remaining groups")
-      assert(out == json(got), "the returned encoding is the result")
+      local out = production.encode_trimmed(got, limit, counted)
+      assert(out == json(want), "limit " .. limit .. ": the encoding is the result")
       assert(whole <= 2, "limit " .. limit .. ": whole-category encodes " .. whole)
+      -- a short estimate is caught by encode_trimmed: dropping goes on in the same order
+      local short, oracle = big(platforms), big(platforms)
+      naive(oracle, limit)
+      assert(production.encode_trimmed(short, limit, json) == json(oracle), "limit " .. limit .. ": fallback")
     end
   end
 end
