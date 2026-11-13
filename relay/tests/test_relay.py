@@ -498,3 +498,24 @@ def test_parse_game_version():
     assert parse_game_version("Version: 2.0.72 (build 82645, linux64, headless)") == "2.0.72"
     assert parse_game_version("") is None
     assert parse_game_version("Unknown command") is None
+
+
+async def test_short_auto_pause_makes_no_dip(env):
+    """Review: a player leaves and is back within 15 s on an auto-pausing server. The game stood
+    still for those seconds, but that was a pause, not a slow server: no dip in UPS."""
+    relay, output, _, clock = env
+    tick = 3000
+    await beat(relay, tick)
+    tick = await beats(relay, clock, tick=tick, seconds=60)
+    assert output.state[-1]["ups"] == 60.0
+    clock.t += 2.5
+    tick += 150
+    await beat(relay, tick, players=0)  # the player left: the game pauses (auto_pause)
+    for _ in range(10):  # 10 s paused: no heartbeats, under the 15 s timeout
+        clock.t += 1
+        await relay.evaluate()
+    tick += 1
+    await beat(relay, tick, players=1)  # back: the game runs again
+    await beats(relay, clock, tick=tick, seconds=90)
+    assert min(s["ups"] for s in output.state if s["ups"] is not None) == 60.0
+    assert output.state[-1]["ups"] == 60.0

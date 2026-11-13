@@ -93,8 +93,9 @@ dropping the connection, because a paused game may not answer them.
   again when the server is `stopped`, the game is paused without players, or no heartbeat
   came for 60 s. A slow game (heartbeats more than 15 s apart, under ~20 UPS) keeps its
   value although `game_state` already reads `paused`/`unknown`. A tick lower than the
-  previous one (a save was loaded) starts a new measurement. Updated in `state` at most
-  once a minute.
+  previous one (a save was loaded) starts a new measurement, and so does a heartbeat that
+  reports players again after `players_online` 0 (an auto-paused game resumed, even within
+  15 s), keeping the last value until the next one. Updated in `state` at most once a minute.
 - `server_started`: when the relay saw RCON answer after a gap: every (re)connect,
   including the relay's own start. Not restored from the retained `state`, so after a
   restart of the relay alone it counts from that restart. `null` while RCON is down.

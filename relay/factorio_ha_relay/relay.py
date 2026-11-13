@@ -111,9 +111,15 @@ class Relay:
         if assembled is None:
             return
         msg = assembled
+        players_before = self._store.players_online
         self._store.apply(msg)
         if msg.type == "heartbeat":
             self._last_heartbeat = self._monotonic()
+            if players_before == 0 and (self._store.players_online or 0) > 0:
+                # Players are back: an auto-paused game was standing still, not slow. Measure
+                # from here (the last value stays until the next one), so a pause shorter than
+                # the heartbeat timeout does not show as a dip.
+                self._ups_meter.reset()
             self._measure_ups(self._last_heartbeat, msg.tick)
             await self._output.publish_tick({"v": PROTOCOL_VERSION, "tick": msg.tick})
         if msg.type == "hello":
