@@ -56,8 +56,12 @@ end
 
 script.on_init(function()
   config.init()
+  planets.warm()
   send_hello("init")
 end)
+
+-- Only prototype-derived lookups, never `storage`.
+script.on_load(planets.warm)
 
 script.on_configuration_changed(function()
   config.init()

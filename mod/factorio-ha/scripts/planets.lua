@@ -13,7 +13,8 @@ local function round4(v)
   return math.floor(v * 10000 + 0.5) / 10000
 end
 
--- Prototype-derived data never changes within a session; computed lazily, session-local.
+-- Prototype-derived data never changes within a session; session-local. Built by warm() when
+-- the game loads (it walks every technology: ~2 ms on Space Age, too much for a tick), or lazily.
 local static -- list of {name, kind, x, y, distance, orientation, magnitude, parent, unlocked_by}
 
 local function build_static()
@@ -74,6 +75,11 @@ local function has_buildings(name)
     or surface.count_entities_filtered({ force = "player", limit = 1 }) > 0
   if built then built_surfaces[surface.index] = true end
   return built
+end
+
+-- on_init / on_load: `prototypes` is readable there and the result is the same on every peer.
+function planets.warm()
+  static = static or build_static()
 end
 
 function planets.collect()

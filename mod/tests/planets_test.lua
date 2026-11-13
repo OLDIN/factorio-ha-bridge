@@ -74,4 +74,16 @@ do
   assert(states().gleba == "unlocked" and searches.gleba == 4, "searched without a registry")
 end
 
+-- warm() runs in on_load, where `game` does not exist: prototypes only
+do
+  package.loaded["scripts.planets"] = nil
+  local fresh = require("scripts.planets")
+  local saved = game
+  game = nil
+  fresh.warm()
+  game = saved
+  prototypes.technology = setmetatable({}, { __pairs = function() error("prototypes read again") end })
+  assert(#fresh.collect().bodies == 3, "collect uses what warm() built")
+end
+
 print("planets_test ok")
