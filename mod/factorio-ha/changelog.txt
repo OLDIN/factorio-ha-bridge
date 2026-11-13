@@ -1,4 +1,10 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.4.1
+Date: 2026-11-13
+  Bugfixes:
+    - fix(mod): search each planet for player buildings once per session (spike every 60 s)
+    - fix(mod): trim the machines category without extra whole-category encodes (spike every 10 s)
+---------------------------------------------------------------------------------------------------
 Version: 0.4.0
 Date: 2026-11-12
   Features:

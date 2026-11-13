@@ -56,10 +56,20 @@ local function build_static()
   return list
 end
 
+-- Surfaces (by index) already seen with player buildings. The search walks the surface's chunks
+-- until it finds one (~3 ms on a 26k-chunk Nauvis), and every snapshot and finished research
+-- collects planets. Session-local, never `storage`: collect also runs from the config command,
+-- which not every peer follows with a snapshot. A planet that loses every building stays
+-- "built" until the next session.
+local built_surfaces = {}
+
 local function has_buildings(name)
   local surface = game.get_surface(name)
   if not surface then return false end
-  return surface.count_entities_filtered({ force = "player", limit = 1 }) > 0
+  if built_surfaces[surface.index] then return true end
+  local built = surface.count_entities_filtered({ force = "player", limit = 1 }) > 0
+  if built then built_surfaces[surface.index] = true end
+  return built
 end
 
 function planets.collect()

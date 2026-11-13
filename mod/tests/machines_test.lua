@@ -250,5 +250,55 @@ do
   assert(p and p.total == 3, "found after the rebuild")
 end
 
+-- a big base: `machines` is trimmed to one datagram with only a few encodes of the whole category
+-- (each one is ~0.5 ms on a real base; a short size estimate meant one more per ~10 dropped groups)
+do
+  local function json(x) -- compact JSON stand-in with realistic sizes
+    if type(x) == "string" then return '"' .. x .. '"' end
+    if type(x) ~= "table" then return tostring(x) end
+    if #x > 0 then
+      local items = {}
+      for i, v in ipairs(x) do items[i] = json(v) end
+      return "[" .. table.concat(items, ",") .. "]"
+    end
+    local keys = {}
+    for k in pairs(x) do keys[#keys + 1] = k end
+    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+    local out = {}
+    for i, k in ipairs(keys) do out[i] = '"' .. tostring(k) .. '":' .. json(x[k]) end
+    return "{" .. table.concat(out, ",") .. "}"
+  end
+  local whole = 0
+  local stub_json = helpers.table_to_json
+  helpers.table_to_json = function(v)
+    if v.by_planet or (type(v.machines) == "table" and v.machines.by_planet) then whole = whole + 1 end
+    return json(v)
+  end
+  reset({ machines = true })
+  local by_name = {}
+  for n = 1, 8 do -- 8 planets x 20 recipes, 4 of 10 machines starving: ~19 KB before the trim
+    local s = { name = "p" .. n, index = 10 + n, valid = true, planet = { name = "p" .. n } }
+    by_name[s.name] = s
+    s.find_entities_filtered = function()
+      local out = {}
+      for _, e in ipairs(world) do if e.surface == s then out[#out + 1] = e end end
+      return out
+    end
+    for r = 1, 20 do
+      for i = 1, 10 do assembler(i <= 4 and "no_ingredients" or "working", "recipe-" .. r).surface = s end
+    end
+  end
+  game.surfaces = by_name
+  game.get_surface = function(name) return by_name[name] end
+  steps(200)
+  whole = 0
+  local data = machines.collect_machines()
+  local size = #json({ machines = data })
+  assert(size <= transport.MAX_DATAGRAM - 200, "the category fits one datagram: " .. size)
+  assert(size > transport.MAX_DATAGRAM - 200 - 300, "and is trimmed only as much as needed: " .. size)
+  assert(whole <= 3, "whole-category encodes: " .. whole)
+  helpers.table_to_json = stub_json
+end
+
 transport.update_if_changed, production.set = real_update, real_set
 print("machines_test ok")
