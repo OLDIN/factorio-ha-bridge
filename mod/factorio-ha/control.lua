@@ -28,7 +28,7 @@ local function collect()
   if config.enabled("research") then data.research = research.snapshot() end
   if config.enabled("evolution") then data.evolution = evolution.snapshot() end
   if config.enabled("defense") then data.defense = defense.snapshot() end
-  if config.enabled("machines") then data.machines = machines.collect_machines() end
+  if config.enabled("machines") then data.machines = machines.snapshot_machines() end -- JSON
   if config.enabled("drills") then data.drills = machines.collect_drills() end
   if config.enabled("platforms") then data.platforms = platforms.collect() end
   return data

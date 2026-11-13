@@ -2,6 +2,7 @@
 
 local transport = require("scripts.transport")
 local config = require("scripts.config")
+local machines = require("scripts.machines")
 local bodies = require("scripts.logic.bodies")
 
 local planets = {}
@@ -63,11 +64,14 @@ end
 -- "built" until the next session.
 local built_surfaces = {}
 
+-- A machine or drill in the registry proves buildings for free; the search is the fallback
+-- (the `machines`/`drills` categories off, or a planet with neither).
 local function has_buildings(name)
   local surface = game.get_surface(name)
   if not surface then return false end
   if built_surfaces[surface.index] then return true end
-  local built = surface.count_entities_filtered({ force = "player", limit = 1 }) > 0
+  local built = machines.has_location(name)
+    or surface.count_entities_filtered({ force = "player", limit = 1 }) > 0
   if built then built_surfaces[surface.index] = true end
   return built
 end

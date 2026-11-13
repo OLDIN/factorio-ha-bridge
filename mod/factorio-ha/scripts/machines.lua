@@ -30,6 +30,11 @@ local UNKNOWN_RESOURCE = "unknown"
 local TYPE_SET = {}
 for _, t in ipairs(machines.TYPES) do TYPE_SET[t] = true end
 
+-- The last published `machines` JSON: {json, tick, output_full}. Session-local on purpose: it only
+-- decides what the server sends over UDP, never game state, so it cannot desync. The 60 s
+-- snapshot reuses it instead of collecting and trimming everything again.
+local last_machines
+
 -- Storage layout (plain data, created lazily so old saves work):
 -- storage.machines = {
 --   reg = scanner registry of {id, entity, planet, drill, resource,
@@ -222,6 +227,28 @@ function machines.collect_machines()
   return data, json
 end
 
+-- `machines` for the snapshot, as JSON: the last publish while it is at most a lap old and was
+-- made with the current line rule (a config change sends a snapshot right away), else collected
+-- now. nil when not ready, like collect_machines.
+function machines.snapshot_machines()
+  local m = storage.machines
+  if not (m and m.ready) then return nil end
+  local c = last_machines
+  if c and game.tick - c.tick <= machines.SCAN_TICKS * machines.LAP_STEPS
+    and c.output_full == config.line_output_full() then
+    return c.json
+  end
+  local _, json = machines.collect_machines()
+  return json
+end
+
+-- Whether the registry holds a counted machine or drill on `location` (a planet name): proof of
+-- player buildings there without searching the surface.
+function machines.has_location(location)
+  local m = storage.machines
+  return m ~= nil and (m.machines.locations[location] ~= nil or m.drills.locations[location] ~= nil)
+end
+
 function machines.collect_drills()
   local m = storage.machines
   if not (m and m.ready) then return nil end
@@ -237,7 +264,10 @@ end
 local function publish()
   if config.enabled("machines") then
     local data, json = machines.collect_machines()
-    if data then transport.update_if_changed("machines", json) end
+    if data then
+      last_machines = { json = json, tick = game.tick, output_full = config.line_output_full() }
+      transport.update_if_changed("machines", json)
+    end
   end
   if config.enabled("drills") then
     local data = machines.collect_drills()

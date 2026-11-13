@@ -297,6 +297,7 @@ do
       for i = 1, 10 do assembler(i <= 4 and "no_ingredients" or "working", "recipe-" .. r).surface = s end
     end
   end
+  local real_surfaces, real_get_surface = game.surfaces, game.get_surface
   game.surfaces = by_name
   game.get_surface = function(name) return by_name[name] end
   steps(200)
@@ -309,6 +310,41 @@ do
   -- once with empty group lists (small), once the result that is sent
   assert(whole <= 2, "whole-category encodes: " .. whole)
   helpers.table_to_json = stub_json
+  game.surfaces, game.get_surface = real_surfaces, real_get_surface
+end
+
+-- the 60 s snapshot reuses the last published JSON while it is fresh and made with the same rule
+do
+  reset({ machines = true })
+  for i = 1, 30 do assembler(i <= 10 and "no_ingredients" or "working") end
+  assert(machines.snapshot_machines() == nil, "nothing before the registry is ready")
+  game.tick = 1000
+  steps(200)
+  local last = published[#published]
+  assert(last and last.category == "machines")
+  local encodes = #encoded
+  local json = machines.snapshot_machines()
+  assert(decoded(json) == last.data and #encoded == encodes, "the published JSON, nothing encoded")
+  game.tick = 1000 + 600
+  assert(machines.snapshot_machines() == json, "still fresh a lap later")
+  game.tick = 1000 + 601
+  json = machines.snapshot_machines()
+  assert(#encoded > encodes and decoded(json) ~= last.data, "older than a lap: collected again")
+  game.tick = 1000
+  storage.config.line_output_full = true
+  encodes = #encoded
+  json = machines.snapshot_machines()
+  assert(#encoded > encodes and decoded(json).by_planet.nauvis, "another line rule: collected again")
+  game.tick = 0
+end
+
+-- the registry tells planets where machines and drills are
+do
+  reset()
+  for _ = 1, 5 do drill("working") end
+  assert(not machines.has_location("nauvis"))
+  steps(200)
+  assert(machines.has_location("nauvis") and not machines.has_location("gleba"))
 end
 
 transport.update_if_changed, production.set = real_update, real_set

@@ -27,7 +27,10 @@ game = {
   get_surface = function(name) return surfaces[name] end,
 }
 
+storage = {}
+
 local planets = require("scripts.planets")
+local production = require("scripts.logic.production")
 
 local function states()
   local out = {}
@@ -57,6 +60,18 @@ do
   surfaces.nauvis, buildings.nauvis = new_surface("nauvis", 7), 0
   assert(states().nauvis == "unlocked", "a recreated surface is searched again")
   assert(searches.nauvis == 2)
+end
+
+-- a machine or drill in the registry proves buildings: no search at all
+do
+  surfaces.vulcanus = new_surface("vulcanus", 9) -- no player entity found by a search either
+  storage.machines = { machines = production.new(), drills = production.new() }
+  production.set(storage.machines.drills, 1, "vulcanus", "tungsten-ore", "working", nil)
+  assert(states().vulcanus == "built", "built from the registry")
+  assert(searches.vulcanus == nil, "the surface was not searched")
+  storage.machines = nil -- categories off: the search is the fallback
+  surfaces.gleba, buildings.gleba = new_surface("gleba", 10), 0
+  assert(states().gleba == "unlocked" and searches.gleba == 4, "searched without a registry")
 end
 
 print("planets_test ok")
