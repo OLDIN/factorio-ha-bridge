@@ -223,10 +223,10 @@ function defense.on_entity_died(e)
   local surface = entity.surface
   local planet = planet_name(surface)
   if not planet then return end
-  local state = storage.attacks
-  if not state then state = attacks.new(); storage.attacks = state end
+  local astate = storage.attacks
+  if not astate then astate = attacks.new(); storage.attacks = astate end
   local p = entity.position
-  local started = attacks.on_loss(state, {
+  local started = attacks.on_loss(astate, {
     tick = game.tick, surface = surface.name, planet = planet, x = p.x, y = p.y, name = entity.name,
   })
   if started then
@@ -236,17 +236,17 @@ end
 
 -- Every 300 ticks: end quiet attacks and push the running ones (at most this often).
 function defense.tick_attacks()
-  local state = storage.attacks
-  if not state then return end
+  local astate = storage.attacks
+  if not astate then return end
   if not config.enabled("defense") then
     storage.attacks = nil
     return
   end
-  local ended = attacks.expire(state, game.tick)
+  local ended = attacks.expire(astate, game.tick)
   for _, e in ipairs(ended) do
     transport.send({ type = "event", event = "attack_ended", data = e })
   end
-  if #ended > 0 or attacks.active(state) then defense.refresh() end
+  if #ended > 0 or attacks.active(astate) then defense.refresh() end
 end
 
 function defense.collect()
@@ -287,7 +287,7 @@ function defense.collect()
     end
   end
   -- planets with turrets always carry walls_damaged, so consumers see 0 after a repair
-  for planet, p in pairs(out) do
+  for _, p in pairs(out) do
     p.walls_damaged = p.walls_damaged or { count = 0, at = {} }
     p.turrets = p.turrets or { total = 0, no_ammo = 0, no_power = 0, no_ammo_at = {} }
   end

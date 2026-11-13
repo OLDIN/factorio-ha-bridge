@@ -1,0 +1,55 @@
+name: CI
+
+# Every pull request and every push to main: the mod's pure-Lua tests on Lua 5.2 (the
+# version Factorio embeds), a lint of the mod code, and the relay's lint and tests.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mod:
+    name: Mod (Lua 5.2 tests, luacheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lua 5.2 and luacheck
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q lua5.2 lua-check
+
+      - name: Lint the mod (.luacheckrc)
+        run: luacheck mod/factorio-ha
+
+      - name: Tests
+        run: LUA=lua5.2 scripts/test-mod.sh
+
+  relay:
+    name: Relay (ruff, pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13" # same as relay/Dockerfile
+
+      - name: Install
+        run: pip install -e "relay[test]" "ruff==0.14.13"
+
+      - name: Lint (.ruff.toml)
+        run: ruff check .
+
+      # The MQTT output tests start Mosquitto in Docker (available on the runner).
+      - name: Tests
+        working-directory: relay
+        run: pytest -q
